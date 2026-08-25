@@ -1,0 +1,56 @@
+{
+  "name": "@amaretto-software-labs/borealis-cli",
+  "version": "0.1.0",
+  "description": "Official command-line interface for the Borealis public API",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Amaretto-Software-Labs/borealis-cli.git"
+  },
+  "homepage": "https://github.com/Amaretto-Software-Labs/borealis-cli#readme",
+  "bugs": "https://github.com/Amaretto-Software-Labs/borealis-cli/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "bin": {
+    "borealis": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "catalog:check": "node scripts/validate-public-catalog.mjs",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/main.ts",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "lint": "eslint .",
+    "parity": "node scripts/import-dotnet-catalog.mjs --check",
+    "parity:update": "node scripts/import-dotnet-catalog.mjs",
+    "prepack": "pnpm clean && pnpm build",
+    "test": "vitest run",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "undici": "^7.24.8",
+    "ws": "^8.18.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.39.1",
+    "prettier": "^3.7.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.48.1",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@10.14.0"
+}

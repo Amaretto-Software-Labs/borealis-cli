@@ -1,0 +1,110 @@
+name: Release npm package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: npm release channel
+        required: true
+        type: choice
+        options: [dev, demo, prod]
+        default: dev
+      version:
+        description: Stable semver is required for prod; optional for prereleases
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Verify committed public operation catalog
+        run: pnpm catalog:check
+      - run: pnpm test && pnpm typecheck && pnpm lint && pnpm format:check
+      - name: Resolve release version
+        id: release
+        shell: bash
+        env:
+          RELEASE_REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+          RELEASE_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
+        run: |
+          set -euo pipefail
+          base="$(node -p "require('./package.json').version")"
+          requested="$RELEASE_REQUESTED_VERSION"
+          channel="$RELEASE_CHANNEL"
+          if [ "$channel" = prod ]; then
+            version="$requested"
+            tag=latest
+            printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          else
+            version="${requested:-${base}-${channel}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}}"
+            tag="$channel"
+            printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$'
+          fi
+          npm version "$version" --no-git-tag-version
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Package and smoke-test exact tarball
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="${RUNNER_TEMP}/npm-package"
+          install_root="$(mktemp -d)"
+          mkdir -p "$package_dir"
+          tarball="$(pnpm pack --pack-destination "$package_dir" | tail -1)"
+          npm install --global --prefix "$install_root" "$tarball"
+          "$install_root/bin/borealis" --version
+          "$install_root/bin/borealis" --help >/dev/null
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: borealis-cli-npm-package
+          path: ${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: borealis-cli-npm-package
+          path: ${{ runner.temp }}/publish-package
+      - name: Publish with trusted provenance
+        if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find "${RUNNER_TEMP}/publish-package" -type f -name '*.tgz')
+          [ "${#tarballs[@]}" -eq 1 ]
+          npm publish "${tarballs[0]}" --ignore-scripts --access public --provenance --tag "${{ needs.package.outputs.tag }}"
+      - name: Report disabled publishing
+        if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
+        run: echo "Package validation completed; npm publishing is disabled until trusted-publisher bootstrap is complete."
