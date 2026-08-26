@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe("BorealisApiClient", () => {
-  it("maps all ten canonical bounded transport operations", () => {
+  it("maps all eleven first-party transport operations", () => {
     expect(implementedTransportOperationIds).toEqual([
       "destructive.preflight.create",
       "sandbox.workspace.export.resource.create",
@@ -25,6 +25,7 @@ describe("BorealisApiClient", () => {
       "sandbox.workspace.import.upload.status",
       "sandbox.workspace.import.upload.chunk",
       "sandbox.workspace.import.upload.complete",
+      "sandbox.exec.stream",
       "registry.create.interactive",
       "service_principal.create.interactive",
       "host_enrollment.create.interactive",
@@ -178,6 +179,36 @@ describe("BorealisApiClient", () => {
     });
     const waiting = client.waitFor({ statusUri: "/api/v1/operations/one" }, 2);
     await expect(waiting).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+
+  it("derives and polls the snapshot operation URI from an accepted snapshot", async () => {
+    const sandboxId = "1a2ddb9b-71dc-5256-8382-0b0119b49586";
+    const requestId = "66de533e-590d-440e-b1c1-3ed16fefa82e";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          requestId,
+          sourceSandboxId: sandboxId,
+          status: "completed",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new BorealisApiClient({
+      api: "https://api.borealishq.io",
+      token: "secret",
+    });
+
+    await expect(
+      client.waitFor(
+        { requestId, sourceSandboxId: sandboxId, status: "accepted" },
+        2,
+      ),
+    ).resolves.toMatchObject({ status: "completed" });
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      `https://api.borealishq.io/api/v1/sandboxes/${sandboxId}/snapshot-operations/${requestId}`,
+    );
   });
 
   it("polls an accepted dedicated workspace status handle at its exact origin", async () => {
@@ -449,6 +480,57 @@ describe("BorealisApiClient", () => {
       expect(fetchMock.mock.calls[1]![1].headers).toMatchObject({
         authorization: "Bearer secret",
       });
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads workspace exports whose pre-stream integrity metadata is null", async () => {
+    const archive = Buffer.from("tar archive");
+    const temporary = await mkdtemp(join(tmpdir(), "borealis-test-"));
+    const destination = join(temporary, "workspace.tar");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            resourceId: "export-key",
+            sandboxId: "sandbox",
+            resourceUri:
+              "https://api.borealishq.io/api/v1/workspace-export-resources/export-key",
+            contentType: "application/x-tar",
+            expiresAt: "2099-01-01T00:00:00Z",
+            contentLength: null,
+            sha256: null,
+            requiresAuthentication: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(archive, {
+          status: 200,
+          headers: { "content-type": "application/x-tar" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const client = new BorealisApiClient({
+        api: "https://api.borealishq.io",
+        token: "secret",
+      });
+      const operation = operations.find(
+        (candidate) => candidate.operationId === "sandbox.workspace.export",
+      )!;
+      await expect(
+        client.invoke(operation, {
+          path: "/api/v1/sandboxes/sandbox/workspace/export",
+          query: new URLSearchParams(),
+          output: destination,
+          idempotencyKey: "export-key",
+        }),
+      ).resolves.toMatchObject({ bytes: archive.length });
+      expect(await readFile(destination)).toEqual(archive);
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }

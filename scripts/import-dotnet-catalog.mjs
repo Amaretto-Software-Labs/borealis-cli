@@ -133,22 +133,31 @@ const transportOperations = transportSection
   : [];
 const transportMethods = transportOperations.map(({ method }) => method);
 if (
-  transportMethods.length !== 10 ||
+  transportMethods.length !== 12 ||
   transportMethods.some((method) => !client.includes(`${method}(`))
 ) {
   throw new Error(
-    `Expected all 10 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
+    `Expected all 12 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
   );
 }
+const firstPartyTransportOperations = transportOperations.filter(
+  ({ operationId }) => operationId !== "sandbox.workspace.import.legacy",
+);
 if (
-  transportOperations.some(
+  firstPartyTransportOperations.length !== 11 ||
+  firstPartyTransportOperations.some(
     ({ operationId }) =>
       !typescriptClient.includes(`"${operationId}"`) ||
       !typescriptClientTests.includes(`"${operationId}"`),
   )
 ) {
   throw new Error(
-    "Every canonical transport operation must be mapped in the TypeScript client and its tests.",
+    "Every first-party transport operation must be mapped in the TypeScript client and its tests.",
+  );
+}
+if (typescriptClient.includes('"sandbox.workspace.import.legacy"')) {
+  throw new Error(
+    "The TypeScript CLI must not use the unsafe legacy workspace import transport.",
   );
 }
 for (const operation of operations) {
