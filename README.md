@@ -2,6 +2,8 @@
 
 The official, open-source command-line client for the versioned Borealis public API. The CLI is an ordinary Node.js package: there are no platform-specific executables to download or unpack.
 
+Website: [borealishq.io](https://borealishq.io) · Built by [Amaretto Software Labs](https://amarettosoftware.com)
+
 ## Install
 
 Node.js 22 or newer is required.
