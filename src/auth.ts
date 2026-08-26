@@ -22,6 +22,262 @@ function base64Url(value: Buffer): string {
   return value.toString("base64url");
 }
 
+const callbackPageStyles = `
+:root {
+  color-scheme: dark;
+  --color-bg: #06131f;
+  --color-panel: #0b1b2b;
+  --color-border: #1d3b4d;
+  --color-text: #c9dce3;
+  --color-text-muted: #91aab5;
+  --color-text-bright: #eaf7fa;
+  --color-accent: #38f5c8;
+  --color-success: #4ade80;
+  --color-error: #fb7185;
+  --color-input: #102638;
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: Consolas, Monaco, "Courier New", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { min-height: 100%; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  color: var(--color-text);
+  background:
+    radial-gradient(circle at 50% -15%, rgba(78, 223, 245, 0.13), transparent 38rem),
+    radial-gradient(circle at 90% 100%, rgba(56, 245, 200, 0.08), transparent 30rem),
+    var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+}
+
+.card {
+  width: min(100%, 480px);
+  padding: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-panel);
+  background: color-mix(in srgb, var(--color-panel) 96%, transparent);
+  box-shadow: var(--shadow-lg);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 32px;
+  color: var(--color-text-bright);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.brand-mark { width: 32px; height: 32px; flex: none; }
+
+.status-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 20px;
+  border: 1px solid var(--color-border);
+  border-color: color-mix(in srgb, var(--status-color) 55%, var(--color-border));
+  border-radius: 999px;
+  color: var(--status-color);
+  background: var(--color-panel);
+  background: color-mix(in srgb, var(--status-color) 10%, transparent);
+}
+
+.status-icon svg { width: 22px; height: 22px; }
+.success { --status-color: var(--color-success); }
+.error { --status-color: var(--color-error); }
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: var(--color-text-bright);
+  font-size: clamp(24px, 7vw, 30px);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.description {
+  margin: 12px 0 24px;
+  color: var(--color-text-muted);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.cli-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text);
+  background: var(--color-input);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--status-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-color) 14%, transparent);
+}
+
+.hint {
+  margin: 16px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --color-bg: #f4f9fb;
+    --color-panel: #ffffff;
+    --color-border: #d8e5ea;
+    --color-text: #294653;
+    --color-text-muted: #5e7580;
+    --color-text-bright: #102a38;
+    --color-accent: #0f766e;
+    --color-success: #15803d;
+    --color-error: #be123c;
+    --color-input: #eaf3f6;
+    --shadow-lg: 0 8px 24px rgba(16, 42, 56, 0.12);
+  }
+}
+
+@media (max-width: 480px) {
+  .shell { padding: 0; place-items: stretch; }
+  .card {
+    min-height: 100vh;
+    padding: 28px 24px;
+    border: 0;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+}`;
+
+const callbackPageStyleHash = createHash("sha256")
+  .update(callbackPageStyles, "utf8")
+  .digest("base64");
+
+export const oauthCallbackResponseHeaders = Object.freeze({
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "no-store",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "content-security-policy": `default-src 'none'; style-src 'sha256-${callbackPageStyleHash}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+});
+
+type OAuthCallbackPageKind = "success" | "invalid" | "failed";
+
+export function renderOAuthCallbackPage(kind: OAuthCallbackPageKind): string {
+  const success = kind === "success";
+  const content = success
+    ? {
+        title: "Authorization complete",
+        description:
+          "Borealis CLI is connected. You can close this window and return to your terminal.",
+        status: "CLI session authorized",
+        hint: "This page does not need to remain open.",
+      }
+    : kind === "invalid"
+      ? {
+          title: "Invalid authorization response",
+          description:
+            "Borealis could not verify this callback. Return to your terminal and start the sign-in flow again.",
+          status: "CLI session not authorized",
+          hint: "Run borealis auth login to retry.",
+        }
+      : {
+          title: "Authorization incomplete",
+          description:
+            "Borealis did not receive an authorization code. Return to your terminal and start the sign-in flow again.",
+          status: "CLI session not authorized",
+          hint: "Run borealis auth login to retry.",
+        };
+  const icon = success
+    ? '<path d="m5 12 4 4L19 6" />'
+    : '<path d="M6 6l12 12M18 6 6 18" />';
+  const statusClass = success ? "success" : "error";
+  const liveRole = success ? "status" : "alert";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>${content.title} · Borealis CLI</title>
+  <style>${callbackPageStyles}</style>
+</head>
+<body>
+  <main class="shell">
+    <section class="card ${statusClass}" aria-labelledby="callback-title" role="${liveRole}">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 49 48" fill="none" aria-hidden="true">
+          <path d="M1.984 29.29a17.21 17.21 0 0 1 17.21-17.21v17.21H1.984Z" fill="#0b1b3d" />
+          <path d="M1.984 29.29A17.21 17.21 0 0 0 19.194 46.5V29.29H1.984Z" fill="#38f5c8" />
+          <path d="M36.404 29.29A17.21 17.21 0 0 1 19.194 46.5V29.29h17.21Z" fill="#4edff5" />
+          <path d="M47.016 14.422a12.922 12.922 0 0 1-12.922 12.922H21.172V14.422a12.922 12.922 0 1 1 25.844 0Z" fill="#6a5cff" />
+        </svg>
+        <span>Borealis</span>
+      </div>
+      <div class="status-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+      </div>
+      <p class="eyebrow">CLI authorization</p>
+      <h1 id="callback-title">${content.title}</h1>
+      <p class="description">${content.description}</p>
+      <div class="cli-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>${content.status}</span>
+      </div>
+      <p class="hint">${content.hint}</p>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
 async function openBrowser(url: string): Promise<void> {
   const [executable, args]: [string, string[]] =
     process.platform === "darwin"
@@ -90,37 +346,20 @@ export async function login(
         url.searchParams.get("state") !== state
       ) {
         response
-          .writeHead(400, {
-            "content-type": "text/plain",
-            "cache-control": "no-store",
-            "referrer-policy": "no-referrer",
-            "x-content-type-options": "nosniff",
-          })
-          .end("Invalid OAuth callback.");
+          .writeHead(400, oauthCallbackResponseHeaders)
+          .end(renderOAuthCallbackPage("invalid"));
         return;
       }
       const code = url.searchParams.get("code");
       if (!code) {
         response
-          .writeHead(400, {
-            "content-type": "text/plain",
-            "cache-control": "no-store",
-            "referrer-policy": "no-referrer",
-            "x-content-type-options": "nosniff",
-          })
-          .end("Authorization failed.");
+          .writeHead(400, oauthCallbackResponseHeaders)
+          .end(renderOAuthCallbackPage("failed"));
         reject(new Error("Authorization callback did not contain a code."));
       } else {
         response
-          .writeHead(200, {
-            "content-type": "text/plain",
-            "cache-control": "no-store",
-            "referrer-policy": "no-referrer",
-            "x-content-type-options": "nosniff",
-          })
-          .end(
-            "Borealis CLI authorization complete. You may close this window.",
-          );
+          .writeHead(200, oauthCallbackResponseHeaders)
+          .end(renderOAuthCallbackPage("success"));
         resolve(code);
       }
     });
