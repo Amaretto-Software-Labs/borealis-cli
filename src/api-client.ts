@@ -18,6 +18,7 @@ export const implementedTransportOperationIds = Object.freeze([
   "sandbox.workspace.import.upload.status",
   "sandbox.workspace.import.upload.chunk",
   "sandbox.workspace.import.upload.complete",
+  "sandbox.exec.stream",
   "registry.create.interactive",
   "service_principal.create.interactive",
   "host_enrollment.create.interactive",
@@ -110,6 +111,23 @@ async function readWithSignal(
       },
     );
   });
+}
+
+function snapshotOperationStatusUri(
+  result: Record<string, unknown>,
+): string | undefined {
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const requestId = result.requestId;
+  const sandboxId = result.sourceSandboxId;
+  if (
+    typeof requestId !== "string" ||
+    typeof sandboxId !== "string" ||
+    !uuid.test(requestId) ||
+    !uuid.test(sandboxId)
+  )
+    return undefined;
+  return `/api/v1/sandboxes/${sandboxId}/snapshot-operations/${requestId}`;
 }
 
 export class BorealisApiClient {
@@ -262,7 +280,10 @@ export class BorealisApiClient {
   async waitFor(result: unknown, timeoutSeconds: number): Promise<unknown> {
     if (!result || typeof result !== "object") return result;
     const initial = result as Record<string, unknown>;
-    const rawUri = initial.statusUri ?? initial.operationUri;
+    const rawUri =
+      initial.statusUri ??
+      initial.operationUri ??
+      snapshotOperationStatusUri(initial);
     if (typeof rawUri !== "string") return result;
     const uri = new URL(rawUri, this.options.api);
     const apiUri = new URL(this.options.api);
@@ -354,8 +375,8 @@ export class BorealisApiClient {
       resourceUri: string;
       expiresAt: string;
       contentType: string;
-      contentLength?: number;
-      sha256?: string;
+      contentLength?: number | null;
+      sha256?: string | null;
       requiresAuthentication: boolean;
     };
     const resourceUrl = new URL(resource.resourceUri, this.options.api);
@@ -370,8 +391,13 @@ export class BorealisApiClient {
       !Number.isFinite(Date.parse(resource.expiresAt)) ||
       Date.parse(resource.expiresAt) <= Date.now() ||
       resource.contentType !== "application/x-tar" ||
-      (resource.contentLength !== undefined &&
-        resource.contentLength > 100 * 1024 * 1024 * 1024) ||
+      (resource.contentLength != null &&
+        (!Number.isSafeInteger(resource.contentLength) ||
+          resource.contentLength < 0 ||
+          resource.contentLength > 100 * 1024 * 1024 * 1024)) ||
+      (resource.sha256 != null &&
+        (typeof resource.sha256 !== "string" ||
+          !/^[0-9a-f]{64}$/i.test(resource.sha256))) ||
       resource.requiresAuthentication !== true
     ) {
       throw new Error(
@@ -449,14 +475,11 @@ export class BorealisApiClient {
         void reader.cancel().catch(() => undefined);
         await stagedFile.close();
       }
-      if (
-        resource.contentLength !== undefined &&
-        bytes !== resource.contentLength
-      )
+      if (resource.contentLength != null && bytes !== resource.contentLength)
         throw new Error("Workspace export length did not match its handle.");
       const digest = hash.digest("hex");
       if (
-        resource.sha256 &&
+        resource.sha256 != null &&
         digest.toLowerCase() !== resource.sha256.toLowerCase()
       )
         throw new Error("Workspace export SHA-256 did not match its handle.");
