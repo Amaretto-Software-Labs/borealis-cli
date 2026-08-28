@@ -92,7 +92,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
-          registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@v8
         with:
           name: borealis-cli-npm-package

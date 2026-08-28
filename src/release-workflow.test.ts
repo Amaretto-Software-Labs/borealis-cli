@@ -37,7 +37,7 @@ describe("release workflow", () => {
     expect(publishJob).toContain("needs: package");
     expect(publishJob).toContain("actions/setup-node@v5");
     expect(publishJob).toContain('node-version: "24"');
-    expect(publishJob).toContain("registry-url: https://registry.npmjs.org");
+    expect(publishJob).not.toContain("registry-url:");
     expect(publishJob).toContain("actions/download-artifact@v8");
     expect(publishJob).toContain("name: borealis-cli-npm-package");
     expect(publishJob).not.toMatch(
