@@ -38,9 +38,12 @@ describe("release workflow", () => {
     expect(publishJob).toContain("actions/setup-node@v5");
     expect(publishJob).toContain('node-version: "24"');
     expect(publishJob).not.toContain("registry-url:");
+    expect(publishJob).toContain("npm install --global npm@12.0.2");
     expect(publishJob).toContain("actions/download-artifact@v8");
     expect(publishJob).toContain("name: borealis-cli-npm-package");
-    expect(publishJob).not.toMatch(
+    expect(
+      publishJob.replace("npm install --global npm@12.0.2", ""),
+    ).not.toMatch(
       /actions\/checkout|pnpm|npm (?:install|version|pack)|npm run/,
     );
     expect(publishJob).toContain(
