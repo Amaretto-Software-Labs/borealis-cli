@@ -19,6 +19,8 @@ export const implementedTransportOperationIds = Object.freeze([
   "sandbox.workspace.import.upload.chunk",
   "sandbox.workspace.import.upload.complete",
   "sandbox.exec.stream",
+  "sandbox.events.stream",
+  "sandbox.usage.batch",
   "registry.create.interactive",
   "service_principal.create.interactive",
   "host_enrollment.create.interactive",
@@ -795,7 +797,14 @@ export class BorealisApiClient {
         return JSON.parse(
           await boundedText(response, undefined, deadline.signal),
         );
-      return await boundedBytes(response, 10 * 1024 * 1024, deadline.signal);
+      const bytes = await boundedBytes(
+        response,
+        10 * 1024 * 1024,
+        deadline.signal,
+      );
+      if (response.status === 202 && bytes.byteLength === 0)
+        return { accepted: true };
+      return bytes;
     } finally {
       deadline.dispose();
     }

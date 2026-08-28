@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe("BorealisApiClient", () => {
-  it("maps all eleven first-party transport operations", () => {
+  it("maps all thirteen first-party transport operations", () => {
     expect(implementedTransportOperationIds).toEqual([
       "destructive.preflight.create",
       "sandbox.workspace.export.resource.create",
@@ -26,6 +26,8 @@ describe("BorealisApiClient", () => {
       "sandbox.workspace.import.upload.chunk",
       "sandbox.workspace.import.upload.complete",
       "sandbox.exec.stream",
+      "sandbox.events.stream",
+      "sandbox.usage.batch",
       "registry.create.interactive",
       "service_principal.create.interactive",
       "host_enrollment.create.interactive",
@@ -321,7 +323,7 @@ describe("BorealisApiClient", () => {
           headers: { "content-type": "application/json" },
         }),
       )
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new BorealisApiClient({
       api: "https://api.borealishq.io",
@@ -330,10 +332,11 @@ describe("BorealisApiClient", () => {
     const operation = operations.find(
       (candidate) => candidate.operationId === "sandbox.delete",
     )!;
-    await client.invoke(operation, {
+    const result = await client.invoke(operation, {
       path: "/api/v1/sandboxes/sandbox-1",
       query: new URLSearchParams(),
     });
+    expect(result).toEqual({ accepted: true });
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
       operationId: "sandbox.delete",
       target: { sandboxId: "sandbox-1" },

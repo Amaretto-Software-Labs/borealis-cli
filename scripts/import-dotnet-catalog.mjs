@@ -133,18 +133,18 @@ const transportOperations = transportSection
   : [];
 const transportMethods = transportOperations.map(({ method }) => method);
 if (
-  transportMethods.length !== 12 ||
+  transportMethods.length !== 14 ||
   transportMethods.some((method) => !client.includes(`${method}(`))
 ) {
   throw new Error(
-    `Expected all 12 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
+    `Expected all 14 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
   );
 }
 const firstPartyTransportOperations = transportOperations.filter(
   ({ operationId }) => operationId !== "sandbox.workspace.import.legacy",
 );
 if (
-  firstPartyTransportOperations.length !== 11 ||
+  firstPartyTransportOperations.length !== 13 ||
   firstPartyTransportOperations.some(
     ({ operationId }) =>
       !typescriptClient.includes(`"${operationId}"`) ||
