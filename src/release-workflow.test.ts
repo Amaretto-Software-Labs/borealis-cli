@@ -37,17 +37,17 @@ describe("release workflow", () => {
     expect(publishJob).toContain("needs: package");
     expect(publishJob).toContain("actions/setup-node@v5");
     expect(publishJob).toContain('node-version: "24"');
-    expect(publishJob).not.toContain("registry-url:");
-    expect(publishJob).toContain("npm install --global npm@12.0.2");
+    expect(publishJob).toContain("registry-url: https://registry.npmjs.org");
+    expect(publishJob).toContain("package-manager-cache: false");
+    expect(publishJob).not.toContain("npm install --global npm@");
     expect(publishJob).toContain("actions/download-artifact@v8");
     expect(publishJob).toContain("name: borealis-cli-npm-package");
-    expect(
-      publishJob.replace("npm install --global npm@12.0.2", ""),
-    ).not.toMatch(
+    expect(publishJob).not.toMatch(
       /actions\/checkout|pnpm|npm (?:install|version|pack)|npm run/,
     );
     expect(publishJob).toContain(
-      'npm publish "${tarballs[0]}" --ignore-scripts --access public --provenance --tag "${{ needs.package.outputs.tag }}"',
+      'npm publish "${tarballs[0]}" --ignore-scripts --access public --tag "${{ needs.package.outputs.tag }}"',
     );
+    expect(publishJob).not.toContain("--provenance");
   });
 });

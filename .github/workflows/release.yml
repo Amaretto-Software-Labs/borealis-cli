@@ -92,8 +92,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
-      - name: Install npm with trusted publishing support
-        run: npm install --global npm@12.0.2
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - uses: actions/download-artifact@v8
         with:
           name: borealis-cli-npm-package
@@ -105,7 +105,8 @@ jobs:
           set -euo pipefail
           mapfile -t tarballs < <(find "${RUNNER_TEMP}/publish-package" -type f -name '*.tgz')
           [ "${#tarballs[@]}" -eq 1 ]
-          npm publish "${tarballs[0]}" --ignore-scripts --access public --provenance --tag "${{ needs.package.outputs.tag }}"
+          npm --version
+          npm publish "${tarballs[0]}" --ignore-scripts --access public --tag "${{ needs.package.outputs.tag }}"
       - name: Report disabled publishing
         if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
         run: echo "Package validation completed; npm publishing is disabled until trusted-publisher bootstrap is complete."
