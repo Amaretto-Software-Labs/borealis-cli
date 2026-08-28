@@ -87,6 +87,29 @@ describe("credential dispatch safety", () => {
     );
   });
 
+  it("reports asynchronously accepted sandbox deletion", async () => {
+    process.env.BOREALIS_ACCESS_TOKEN = "token";
+    const sandboxId = "1a2ddb9b-71dc-5256-8382-0b0119b49586";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('{"preflightToken":"proof"}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    expect(await run(["--yes", "--json", "sandbox", "delete", sandboxId])).toBe(
+      0,
+    );
+    expect(stdout).toHaveBeenCalledWith('{"accepted":true}\n');
+  });
+
   it("rejects credential-bearing enrollment reads without a delivery target", async () => {
     process.env.BOREALIS_ACCESS_TOKEN = "token";
     const fetchMock = vi.fn();
