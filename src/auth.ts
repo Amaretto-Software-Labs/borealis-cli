@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createServer } from "node:http";
+import { runOAuthSession, type OAuthPageKind } from "./oauth-session.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -105,6 +105,7 @@ body {
 
 .status-icon svg { width: 22px; height: 22px; }
 .success { --status-color: var(--color-success); }
+.waiting { --status-color: var(--color-accent); }
 .error { --status-color: var(--color-error); }
 
 .eyebrow {
@@ -161,6 +162,19 @@ h1 {
   font-size: 12px;
 }
 
+.actions { display: grid; gap: 10px; margin-top: 24px; }
+.actions form { margin: 0; }
+.actions button {
+  width: 100%; min-height: 44px; padding: 10px 16px;
+  border: 1px solid var(--color-accent); border-radius: 4px;
+  background: var(--color-accent); color: var(--color-bg);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.actions button:hover { filter: brightness(1.1); }
+.actions .secondary { color: var(--color-text-bright); background: transparent; border-color: var(--color-border); }
+.actions .secondary:hover { background: var(--color-input); }
+.actions button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
@@ -204,12 +218,13 @@ export const oauthCallbackResponseHeaders = Object.freeze({
   "cache-control": "no-store",
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
-  "content-security-policy": `default-src 'none'; style-src 'sha256-${callbackPageStyleHash}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+  "content-security-policy": `default-src 'none'; style-src 'sha256-${callbackPageStyleHash}'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
 });
 
-type OAuthCallbackPageKind = "success" | "invalid" | "failed";
-
-export function renderOAuthCallbackPage(kind: OAuthCallbackPageKind): string {
+export function renderOAuthCallbackPage(
+  kind: OAuthPageKind,
+  retryPath?: string,
+): string {
   const success = kind === "success";
   const content = success
     ? {
@@ -219,26 +234,61 @@ export function renderOAuthCallbackPage(kind: OAuthCallbackPageKind): string {
         status: "CLI session authorized",
         hint: "This page does not need to remain open.",
       }
-    : kind === "invalid"
+    : kind === "cancelled"
       ? {
-          title: "Invalid authorization response",
+          title: "Sign-in cancelled",
           description:
-            "Borealis could not verify this callback. Return to your terminal and start the sign-in flow again.",
+            "You cancelled authorization. No access was granted to the CLI. Try again, or sign in with a different account.",
           status: "CLI session not authorized",
-          hint: "Run borealis auth login to retry.",
+          hint: "Keep the CLI open. You can retry without restarting it.",
         }
-      : {
-          title: "Authorization incomplete",
-          description:
-            "Borealis did not receive an authorization code. Return to your terminal and start the sign-in flow again.",
-          status: "CLI session not authorized",
-          hint: "Run borealis auth login to retry.",
-        };
+      : kind === "waiting"
+        ? {
+            title: "Finish signing in",
+            description: retryPath
+              ? "Complete authorization in your browser. If you closed the page or chose the wrong account, you can restart below."
+              : "Finishing sign-in and saving your credentials securely. Please wait, or press Ctrl+C in your terminal to stop.",
+            status: "CLI waiting for authorization",
+            hint: retryPath
+              ? "Press Enter in your terminal to retry, or Ctrl+C to stop."
+              : "Keep the CLI open while sign-in finishes.",
+          }
+        : kind === "timeout"
+          ? {
+              title: "Sign-in timed out",
+              description:
+                "This sign-in attempt expired. Your CLI is still running and ready for a fresh attempt.",
+              status: "CLI session not authorized",
+              hint: "Try again below without restarting the CLI.",
+            }
+          : kind === "invalid"
+            ? {
+                title: "Invalid authorization response",
+                description:
+                  "This response does not match the active sign-in attempt. Your CLI is still waiting. Start a fresh attempt below.",
+                status: "CLI session not authorized",
+                hint: retryPath
+                  ? "Keep the CLI open. You can retry without restarting it."
+                  : "Run borealis auth login to retry.",
+              }
+            : {
+                title: "Authorization incomplete",
+                description:
+                  "We couldn't finish signing you in. No new credentials were saved. Try again without restarting the CLI.",
+                status: "CLI session not authorized",
+                hint: retryPath
+                  ? "Keep the CLI open. You can retry without restarting it."
+                  : "Run borealis auth login to retry.",
+              };
   const icon = success
     ? '<path d="m5 12 4 4L19 6" />'
     : '<path d="M6 6l12 12M18 6 6 18" />';
-  const statusClass = success ? "success" : "error";
-  const liveRole = success ? "status" : "alert";
+  const statusClass = success
+    ? "success"
+    : kind === "waiting"
+      ? "waiting"
+      : "error";
+  const liveRole = success || kind === "waiting" ? "status" : "alert";
 
   return `<!doctype html>
 <html lang="en">
@@ -267,6 +317,14 @@ export function renderOAuthCallbackPage(kind: OAuthCallbackPageKind): string {
       <p class="eyebrow">CLI authorization</p>
       <h1 id="callback-title">${content.title}</h1>
       <p class="description">${content.description}</p>
+${
+  !success && retryPath
+    ? `<div class="actions">
+        <form action="${retryPath.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")}" method="post"><button type="submit">Try again</button></form>
+        <form action="${retryPath.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")}?account=change" method="post"><button class="secondary" type="submit">Use another account</button></form>
+      </div><p class="hint">Using another account signs you out of Borealis in this browser. Keep the CLI open; press Enter there to retry, or Ctrl+C to stop.</p>`
+    : ""
+}
       <div class="cli-status">
         <span class="status-dot" aria-hidden="true"></span>
         <span>${content.status}</span>
@@ -330,157 +388,122 @@ export async function login(
   const app = validateOrigin(options.app, "Application URL");
   const api = validateOrigin(options.api, "API URL");
   scope = validateLoginScope(scope);
-  const verifier = base64Url(randomBytes(32));
-  const challenge = base64Url(
-    createHash("sha256").update(verifier, "ascii").digest(),
-  );
-  const state = base64Url(randomBytes(24));
-  const port = 17_890;
-  const redirectUri = defaults.redirectUri;
-  const server = createServer();
-  const callback = new Promise<string>((resolve, reject) => {
-    server.on("request", (request, response) => {
-      const url = new URL(request.url ?? "/", redirectUri);
-      if (
-        url.pathname !== "/callback/" ||
-        url.searchParams.get("state") !== state
-      ) {
-        response
-          .writeHead(400, oauthCallbackResponseHeaders)
-          .end(renderOAuthCallbackPage("invalid"));
-        return;
-      }
-      const code = url.searchParams.get("code");
-      if (!code) {
-        response
-          .writeHead(400, oauthCallbackResponseHeaders)
-          .end(renderOAuthCallbackPage("failed"));
-        reject(new Error("Authorization callback did not contain a code."));
-      } else {
-        response
-          .writeHead(200, oauthCallbackResponseHeaders)
-          .end(renderOAuthCallbackPage("success"));
-        resolve(code);
-      }
-    });
-    server.on("error", reject);
-    server.listen(port, "127.0.0.1");
-  });
-  const authorize = new URL("/auth/client/start", app);
-  for (const [key, value] of Object.entries({
-    client_type: "cli",
-    client_id: defaults.clientId,
-    redirect_uri: redirectUri,
-    scope,
-    state,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-  }))
-    authorize.searchParams.set(key, value);
-  if (loginHint) authorize.searchParams.set("login_hint", loginHint);
-  process.stderr.write(`Opening ${authorize.origin} for authentication…\n`);
-  let code: string;
-  let callbackTimeout: NodeJS.Timeout | undefined;
-  let rejectForAbort: (() => void) | undefined;
-  try {
-    if (!server.listening) {
-      await new Promise<void>((resolve, reject) => {
-        server.once("listening", resolve);
-        server.once("error", reject);
-      });
-    }
-    await openBrowser(authorize.toString());
-    code = await Promise.race([
-      callback,
-      new Promise<never>((_, reject) => {
-        rejectForAbort = () =>
-          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-        signal?.addEventListener("abort", rejectForAbort, { once: true });
-      }),
-      new Promise<never>((_, reject) => {
-        callbackTimeout = setTimeout(
-          () =>
-            reject(new Error("OAuth callback timed out after five minutes.")),
-          5 * 60 * 1000,
-        );
-        callbackTimeout.unref();
-      }),
-    ]);
-  } finally {
-    if (callbackTimeout) clearTimeout(callbackTimeout);
-    if (rejectForAbort) signal?.removeEventListener("abort", rejectForAbort);
-    server.close();
-  }
-  const token = await requestToken(
-    identity,
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      client_id: defaults.clientId,
-      redirect_uri: redirectUri,
-      code_verifier: verifier,
-    }),
+  return await runOAuthSession({
+    port: Number(new URL(defaults.redirectUri).port),
     signal,
-  );
-  if (!token.refresh_token)
-    throw new Error("The authorization server did not return a refresh token.");
-  const contextDeadline = createRequestDeadline(signal, 30_000);
-  let contextResponse: Response;
-  let contextText: string;
-  try {
-    contextResponse = await fetch(`${api}/api/v1/context`, {
-      headers: {
-        authorization: `Bearer ${token.access_token}`,
-        accept: "application/json",
-        ...(options.organization
-          ? { "x-organization-id": options.organization }
-          : {}),
-      },
-      redirect: "error",
-      signal: contextDeadline.signal,
-    });
-    contextText = await readBoundedResponse(
-      contextResponse,
-      1024 * 1024,
-      contextDeadline.signal,
-    );
-  } finally {
-    contextDeadline.dispose();
-  }
-  if (!contextResponse.ok)
-    throw new Error(
-      `Borealis context validation failed (${contextResponse.status}).`,
-    );
-  const context = z
-    .object({
-      selectedOrganizationId: z.string().min(1).nullable().optional(),
-      organizations: z.array(z.object({ organizationId: z.string().min(1) })),
-    })
-    .parse(JSON.parse(contextText));
-  if (
-    options.organization &&
-    !context.organizations.some(
-      (membership) => membership.organizationId === options.organization,
-    )
-  )
-    throw new Error(
-      `The authenticated user is not a member of organization '${options.organization}'.`,
-    );
-  const organization =
-    options.organization ?? context.selectedOrganizationId ?? undefined;
-  const session: Session = {
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-    expiresAt: new Date(Date.now() + token.expires_in * 1000).toISOString(),
-    scope: token.scope,
-    clientId: defaults.clientId,
-    api,
-    identity,
-    app,
-    ...(organization ? { organization } : {}),
-  };
-  await saveSession(options.profile, session, signal);
-  return session;
+    headers: oauthCallbackResponseHeaders,
+    renderPage: renderOAuthCallbackPage,
+    openBrowser,
+    createAttempt(redirectUri, _retry, switchAccount) {
+      const verifier = base64Url(randomBytes(32));
+      const challenge = base64Url(
+        createHash("sha256").update(verifier, "ascii").digest(),
+      );
+      const state = base64Url(randomBytes(24));
+      const authorize = new URL("/auth/client/start", app);
+      for (const [key, value] of Object.entries({
+        client_type: "cli",
+        client_id: defaults.clientId,
+        redirect_uri: redirectUri,
+        scope,
+        state,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      }))
+        authorize.searchParams.set(key, value);
+      if (loginHint && !switchAccount)
+        authorize.searchParams.set("login_hint", loginHint);
+      const entry = switchAccount ? new URL("/auth/logout", app) : authorize;
+      if (switchAccount)
+        entry.searchParams.set(
+          "returnUrl",
+          authorize.pathname + authorize.search,
+        );
+      return {
+        state,
+        authorizationUrl: entry.toString(),
+        async complete(code, signal) {
+          const token = await requestToken(
+            identity,
+            new URLSearchParams({
+              grant_type: "authorization_code",
+              code,
+              client_id: defaults.clientId,
+              redirect_uri: redirectUri,
+              code_verifier: verifier,
+            }),
+            signal,
+          );
+          if (!token.refresh_token)
+            throw new Error(
+              "The authorization server did not return a refresh token.",
+            );
+          const contextDeadline = createRequestDeadline(signal, 30_000);
+          let contextResponse: Response;
+          let contextText: string;
+          try {
+            contextResponse = await fetch(`${api}/api/v1/context`, {
+              headers: {
+                authorization: `Bearer ${token.access_token}`,
+                accept: "application/json",
+                ...(options.organization
+                  ? { "x-organization-id": options.organization }
+                  : {}),
+              },
+              redirect: "error",
+              signal: contextDeadline.signal,
+            });
+            contextText = await readBoundedResponse(
+              contextResponse,
+              1024 * 1024,
+              contextDeadline.signal,
+            );
+          } finally {
+            contextDeadline.dispose();
+          }
+          if (!contextResponse.ok)
+            throw new Error(
+              `Borealis context validation failed (${contextResponse.status}).`,
+            );
+          const context = z
+            .object({
+              selectedOrganizationId: z.string().min(1).nullable().optional(),
+              organizations: z.array(
+                z.object({ organizationId: z.string().min(1) }),
+              ),
+            })
+            .parse(JSON.parse(contextText));
+          if (
+            options.organization &&
+            !context.organizations.some(
+              (membership) =>
+                membership.organizationId === options.organization,
+            )
+          )
+            throw new Error(
+              `The authenticated user is not a member of organization '${options.organization}'.`,
+            );
+          const organization =
+            options.organization ?? context.selectedOrganizationId ?? undefined;
+          const session: Session = {
+            accessToken: token.access_token,
+            refreshToken: token.refresh_token,
+            expiresAt: new Date(
+              Date.now() + token.expires_in * 1000,
+            ).toISOString(),
+            scope: token.scope,
+            clientId: defaults.clientId,
+            api,
+            identity,
+            app,
+            ...(organization ? { organization } : {}),
+          };
+          await saveSession(options.profile, session, signal);
+          return session;
+        },
+      };
+    },
+  });
 }
 
 async function readBoundedResponse(
