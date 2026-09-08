@@ -110,6 +110,54 @@ describe("credential dispatch safety", () => {
     expect(stdout).toHaveBeenCalledWith('{"accepted":true}\n');
   });
 
+  it.each([
+    { status: "failed", imported: false, exit: 3 },
+    { status: "completed", imported: true, exit: 0 },
+    { status: "queued", imported: false, exit: 0 },
+  ])(
+    "returns $exit for a $status workspace import and preserves JSON output",
+    async ({ status, imported, exit }) => {
+      process.env.BOREALIS_ACCESS_TOKEN = "token";
+      const result = {
+        status,
+        imported,
+        importErrorCode:
+          status === "failed" ? "workspace_import_insufficient_storage" : null,
+      };
+      vi.spyOn(BorealisApiClient.prototype, "invoke").mockResolvedValue({
+        status: "queued",
+      });
+      vi.spyOn(BorealisApiClient.prototype, "waitFor").mockResolvedValue(
+        result,
+      );
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+
+      expect(
+        await run([
+          "--yes",
+          "--json",
+          "sandbox",
+          "workspace",
+          "import",
+          "sandbox-id",
+          "archive.tar",
+          "--wait",
+        ]),
+      ).toBe(exit);
+      expect(stdout).toHaveBeenCalledWith(JSON.stringify(result) + "\n");
+      if (exit)
+        expect(stderr).toHaveBeenCalledWith(
+          "Workspace import failed: workspace_import_insufficient_storage\n",
+        );
+      else expect(stderr).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects credential-bearing enrollment reads without a delivery target", async () => {
     process.env.BOREALIS_ACCESS_TOKEN = "token";
     const fetchMock = vi.fn();

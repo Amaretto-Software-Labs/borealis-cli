@@ -63,7 +63,7 @@ borealis template create --set displayName=Node --set image=node:22
 borealis template create --body '{"displayName":"Node","defaults":{"name":"Node","image":"node:22"}}'
 ```
 
-All commands support `--json`. JSON output preserves the public response. Human output is a presentation of the same response.
+All commands support `--json`. JSON output preserves the public response. Human output is a presentation of the same response. A workspace import that reaches `failed` exits with code 3, including when `--wait` is used; its JSON result is still written to stdout.
 
 ### Safety
 

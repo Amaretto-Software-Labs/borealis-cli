@@ -430,6 +430,18 @@ async function runInternal(
     }
   }
   writeResult(result, options.json);
+  if (
+    resolved.operation.operationId === "sandbox.workspace.import" &&
+    result &&
+    typeof result === "object" &&
+    (result as Record<string, unknown>).status === "failed"
+  ) {
+    const code = (result as Record<string, unknown>).importErrorCode;
+    process.stderr.write(
+      `Workspace import failed${typeof code === "string" && code ? `: ${code}` : "."}\n`,
+    );
+    return 3;
+  }
   return 0;
 }
 
