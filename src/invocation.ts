@@ -6,6 +6,7 @@ import { readOwnerOnlySecretFile } from "./secret-file.js";
 const valueOptions = new Set([
   "--account",
   "--arg",
+  "--architecture",
   "--api",
   "--app",
   "--body",
@@ -32,6 +33,7 @@ const valueOptions = new Set([
   "--limit",
   "--login-hint",
   "--memory",
+  "--memory-mib",
   "--microcredits",
   "--name",
   "--namespace",
@@ -49,9 +51,12 @@ const valueOptions = new Set([
   "--reason",
   "--redirect-port",
   "--repository",
+  "--root-disk",
   "--region",
   "--request-id",
   "--role",
+  "--runtime",
+  "--runtime-template",
   "--rows",
   "--sandbox",
   "--sandbox-name",
@@ -69,12 +74,14 @@ const valueOptions = new Set([
   "--success-url",
   "--tail",
   "--target",
+  "--template-revision",
   "--threshold",
   "--timeout",
   "--token",
   "--token-file",
   "--type",
   "--username",
+  "--vcpu",
   "--window-minutes",
   "--workdir",
   "--working-directory",
@@ -104,6 +111,7 @@ const numericOptions = new Set([
   "idleTimeout",
   "limit",
   "memory",
+  "memoryMib",
   "microcredits",
   "page",
   "pageSize",
@@ -111,8 +119,11 @@ const numericOptions = new Set([
   "slots",
   "tail",
   "target",
+  "templateRevision",
   "threshold",
   "timeout",
+  "vcpu",
+  "rootDisk",
   "windowMinutes",
 ]);
 const booleanOptionKeys = new Set([
@@ -405,7 +416,65 @@ export async function prepareRequest(
       values.exposedPorts = values.port.map(parsePortBinding);
       delete values.port;
     }
-    if (values.cpu !== undefined || values.memory !== undefined) {
+    const runtimeKind = values.runtime;
+    if (
+      runtimeKind !== undefined &&
+      runtimeKind !== "container" &&
+      runtimeKind !== "microvm"
+    ) {
+      throw new Error("--runtime must be container or microvm.");
+    }
+    if (runtimeKind === "microvm") {
+      if (values.image !== undefined) {
+        throw new Error(
+          "--image cannot be combined with --runtime microvm; use --runtime-template.",
+        );
+      }
+      if (
+        !values.runtimeTemplate ||
+        !values.templateRevision ||
+        !values.architecture
+      ) {
+        throw new Error(
+          "MicroVM creation requires --runtime-template, --template-revision, and --architecture.",
+        );
+      }
+      if (
+        values.architecture !== "x86_64" &&
+        values.architecture !== "aarch64"
+      ) {
+        throw new Error("--architecture must be x86_64 or aarch64.");
+      }
+      values.runtime = {
+        kind: "microvm",
+        templateId: values.runtimeTemplate,
+        templateRevision: Number(values.templateRevision),
+        architecture: values.architecture,
+        resources: {
+          vcpu: Number(values.vcpu ?? 1),
+          memoryMiB: Number(values.memoryMib ?? 2048),
+          rootDiskGiB: Number(values.rootDisk ?? 20),
+        },
+      };
+      for (const key of [
+        "runtimeTemplate",
+        "templateRevision",
+        "architecture",
+        "vcpu",
+        "memoryMib",
+        "rootDisk",
+      ])
+        delete values[key];
+      if (values.cpu !== undefined || values.memory !== undefined) {
+        throw new Error("Use --vcpu and --memory-mib with --runtime microvm.");
+      }
+    } else if (runtimeKind === "container") {
+      values.runtime = { kind: "container" };
+    }
+    if (
+      runtimeKind !== "microvm" &&
+      (values.cpu !== undefined || values.memory !== undefined)
+    ) {
       values.resourceProfile = {
         cpuCores: values.cpu ?? 1,
         memoryGb: values.memory ?? 2,
