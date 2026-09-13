@@ -416,7 +416,8 @@ export async function prepareRequest(
       values.exposedPorts = values.port.map(parsePortBinding);
       delete values.port;
     }
-    const runtimeKind = values.runtime;
+    const runtimeKind =
+      typeof values.runtime === "string" ? values.runtime : undefined;
     if (
       runtimeKind !== undefined &&
       runtimeKind !== "container" &&

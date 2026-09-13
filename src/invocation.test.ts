@@ -315,4 +315,39 @@ describe("request preparation", () => {
     });
     expect(create.body).not.toHaveProperty("image");
   });
+
+  it("preserves structured runtime contracts supplied through --set", async () => {
+    const containerRuntime = { kind: "container" };
+    const container = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "container",
+      "--image",
+      "node:22",
+      "--set",
+      `runtime=${JSON.stringify(containerRuntime)}`,
+    ]);
+    expect(container.body).toEqual({
+      name: "container",
+      image: "node:22",
+      runtime: containerRuntime,
+    });
+
+    const microVmRuntime = {
+      kind: "microvm",
+      templateId: "ubuntu-24.04",
+      templateRevision: 3,
+      architecture: "aarch64",
+      resources: { vcpu: 2, memoryMiB: 4096, rootDiskGiB: 20 },
+    };
+    const microVm = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "isolated",
+      "--set",
+      `runtime=${JSON.stringify(microVmRuntime)}`,
+    ]);
+    expect(microVm.body).toEqual({
+      name: "isolated",
+      runtime: microVmRuntime,
+    });
+  });
 });
