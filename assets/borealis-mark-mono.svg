@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none" role="img" aria-label="Borealis">
+  <title>Borealis</title>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 7.5H13A5.5 5.5 0 0 0 7.5 13v22A5.5 5.5 0 0 0 13 40.5h3" stroke-width="4.6"/>
+    <path d="M32 7.5H35A5.5 5.5 0 0 1 40.5 13v22A5.5 5.5 0 0 1 35 40.5h-3" stroke-width="4.6"/>
+    <path d="M26 10.5C25 19 23 29 22 37.5" stroke-width="6.4"/>
+  </g>
+</svg>

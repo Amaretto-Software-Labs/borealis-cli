@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Amaretto-Software-Labs/borealis-cli/main/assets/borealis-mark.svg">
+  <img alt="Borealis" src="https://raw.githubusercontent.com/Amaretto-Software-Labs/borealis-cli/main/assets/borealis-mark-light.svg" width="72" height="72">
+</picture>
+
 # Borealis CLI
 
 The official, open-source command-line client for the versioned Borealis public API. The CLI is an ordinary Node.js package: there are no platform-specific executables to download or unpack.
@@ -54,6 +59,21 @@ borealis sandbox get 018f4c28-dc05-7e91-9f8e-11e421bb8a91 --json
 borealis sandbox create --body '{"name":"demo","image":"ubuntu:24.04"}'
 borealis host list --pool 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 borealis interactive attach 018f4c28-dc05-7e91-9f8e-11e421bb8a91
+```
+
+Container remains the compatibility default. Select an immutable ARM64 MicroVM
+template explicitly when stronger isolation is required:
+
+```bash
+borealis sandbox create \
+  --name isolated-build \
+  --runtime microvm \
+  --runtime-template ubuntu-24.04 \
+  --template-revision 3 \
+  --architecture aarch64 \
+  --vcpu 2 \
+  --memory-mib 4096 \
+  --root-disk 20
 ```
 
 Path identifiers are positional. Request fields can use their named kebab-case option or the transport-neutral forms:
