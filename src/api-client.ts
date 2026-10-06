@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { operations, runtimeLifecycleMappings } from "./catalog.js";
 import type { Operation } from "./types.js";
 import type { PreparedRequest } from "./invocation.js";
 import { targetFromPath } from "./invocation.js";
@@ -153,6 +154,65 @@ export class BorealisApiClient {
     operation: Operation,
     request: PreparedRequest,
   ): Promise<unknown> {
+    const runtimeId = runtimeLifecycleMappings[operation.operationId];
+    if (runtimeId) {
+      const sandbox = (await this.send(
+        "GET",
+        request.path.replace(/\/(start|stop|resume)$/, ""),
+        this.headers(),
+      )) as Record<string, unknown>;
+      if (
+        !sandbox ||
+        !["container", "microvm"].includes(String(sandbox.runtimeKind))
+      )
+        throw new Error(
+          "Cannot establish the sandbox runtime kind; inspect sandbox get before dispatch.",
+        );
+      if (sandbox.runtimeKind === "microvm") {
+        if (
+          !request.idempotencyKey ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            request.idempotencyKey,
+          )
+        )
+          throw new Error(
+            `${operation.command} on Runtime v2 requires an explicit UUID --idempotency-key; retain it for recovery.`,
+          );
+        const machineId = request.path.match(/\/sandboxes\/([^/]+)/)?.[1];
+        if (!machineId) throw new Error("Invalid sandbox lifecycle target.");
+        const logical = (await this.send(
+          "GET",
+          `/api/v1/sandboxes/${machineId}/runtime`,
+          this.headers(),
+        )) as Record<string, unknown>;
+        if (
+          !logical ||
+          String(logical.sandboxId).toLowerCase() !== machineId.toLowerCase() ||
+          typeof logical.logicalState !== "string"
+        )
+          throw new Error(
+            "The API did not establish the requested machine's logical binding.",
+          );
+        const mapped = operations.find(
+          (candidate) => candidate.operationId === runtimeId,
+        )!;
+        return await this.invoke(mapped, {
+          ...request,
+          path: mapped.path.replace("{sandboxId}", machineId),
+        });
+      }
+    }
+    if (/^(logical_machine|runtime_template)\./.test(operation.operationId)) {
+      const discovery = await this.runtimeCapabilities();
+      if (
+        !discovery.enabled ||
+        !discovery.operations.includes(operation.operationId)
+      )
+        throw new ApiError(
+          409,
+          "Runtime v2 operation is disabled or unsupported by this API.",
+        );
+    }
     try {
       return await this.invokeCore(operation, request);
     } catch (error) {
@@ -261,7 +321,13 @@ export class BorealisApiClient {
         "POST",
         "/api/v1/preflights",
         headers,
-        { operationId: operation.operationId, target },
+        {
+          operationId:
+            operation.operationId === "logical_machine.delete"
+              ? "sandbox.delete"
+              : operation.operationId,
+          target,
+        },
       )) as { preflightToken?: string };
       if (!preflight.preflightToken)
         throw new Error(
@@ -276,7 +342,77 @@ export class BorealisApiClient {
       headers,
       request.body,
     );
+    if (/^(logical_machine|runtime_template)\./.test(operation.operationId))
+      validateRuntimeResult(operation, request, result);
     return result;
+  }
+
+  async runtimeCapabilities(): Promise<{
+    enabled: boolean;
+    operations: string[];
+  }> {
+    const value = await this.send(
+      "GET",
+      "/api/v1/capabilities/runtime-v2",
+      this.headers(),
+    );
+    if (!value || typeof value !== "object")
+      throw new Error("Invalid Runtime v2 capability response.");
+    const data = value as Record<string, unknown>;
+    if (
+      typeof data.enabled !== "boolean" ||
+      !Array.isArray(data.operations) ||
+      !data.operations.every((id) => typeof id === "string")
+    )
+      throw new Error("Invalid Runtime v2 capability response.");
+    return { enabled: data.enabled, operations: data.operations as string[] };
+  }
+
+  async waitForRuntime(
+    result: unknown,
+    timeoutSeconds: number,
+  ): Promise<unknown> {
+    if (!result || typeof result !== "object")
+      throw new Error("Invalid Runtime v2 result.");
+    const data = result as Record<string, unknown>;
+    const wake =
+      data.wake && typeof data.wake === "object"
+        ? (data.wake as Record<string, unknown>)
+        : data;
+    if (
+      typeof wake.requestId !== "string" ||
+      typeof wake.sandboxId !== "string"
+    )
+      return result;
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    let current = wake;
+    while (Date.now() < deadline) {
+      const state = String(current.state).toLowerCase();
+      if (["committed", "failed", "outcomeunknown"].includes(state))
+        return current;
+      await delay(Math.min(1000, deadline - Date.now()), undefined, {
+        signal: this.options.signal,
+      });
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      current = (await this.send(
+        "GET",
+        `/api/v1/sandboxes/${encodeURIComponent(wake.sandboxId)}/runtime/wakes/${encodeURIComponent(wake.requestId)}`,
+        this.headers(),
+        undefined,
+        Math.min(this.options.requestTimeoutMs ?? 30000, remaining),
+      )) as Record<string, unknown>;
+      if (
+        current.requestId !== wake.requestId ||
+        current.sandboxId !== wake.sandboxId
+      )
+        throw new Error(
+          "Runtime v2 returned a wake for a different request or machine.",
+        );
+    }
+    throw new Error(
+      `Runtime v2 wait timed out; reconcile logical-machine wake get ${wake.sandboxId} ${wake.requestId}.`,
+    );
   }
 
   async waitFor(result: unknown, timeoutSeconds: number): Promise<unknown> {
@@ -987,3 +1123,96 @@ const operationForImport: Operation = {
   paging: "none",
   requiresPreflight: true,
 };
+
+function validateRuntimeResult(
+  operation: Operation,
+  request: PreparedRequest,
+  value: unknown,
+): void {
+  const fail = (): never => {
+    throw new TypeError(
+      "Runtime v2 returned an invalid or mismatched result; reconcile the original request identity.",
+    );
+  };
+  const record = (item: unknown): Record<string, unknown> =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? (item as Record<string, unknown>)
+      : fail();
+  const uuid = (item: unknown): boolean =>
+    typeof item === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      item,
+    );
+  const machine =
+    request.path.match(/\/sandboxes\/([^/]+)\/runtime/)?.[1] ??
+    request.path.match(/\/logical-machines\/([^/]+)\/allocations/)?.[1];
+  const check = (item: unknown): Record<string, unknown> => {
+    const data = record(item);
+    if (
+      operation.operationId.startsWith("runtime_template.") &&
+      operation.operationId !== "runtime_template.activate"
+    ) {
+      if (
+        !uuid(data.templateId) ||
+        !Number.isInteger(data.revision) ||
+        Number(data.revision) < 1 ||
+        typeof data.state !== "string"
+      )
+        fail();
+      const binding = request.path.match(
+        /\/runtime-templates\/([^/]+)\/revisions\/(\d+)/,
+      );
+      if (
+        binding &&
+        (String(data.templateId).toLowerCase() !== binding[1]?.toLowerCase() ||
+          data.revision !== Number(binding[2]))
+      )
+        fail();
+      return data;
+    }
+    if (operation.operationId === "logical_machine.turn.renew") {
+      if (
+        !uuid(data.leaseId) ||
+        typeof data.expiresAt !== "string" ||
+        !Number.isFinite(Date.parse(data.expiresAt))
+      )
+        fail();
+      return data;
+    }
+    if (
+      !uuid(data.sandboxId) ||
+      (machine &&
+        String(data.sandboxId).toLowerCase() !== machine.toLowerCase())
+    )
+      fail();
+    if (
+      [
+        "logical_machine.allocate",
+        "logical_machine.wake",
+        "logical_machine.start",
+        "runtime_template.activate",
+      ].includes(operation.operationId) &&
+      data.requestId !== request.idempotencyKey
+    )
+      fail();
+    if (operation.operationId.startsWith("logical_machine.allocation.")) {
+      const requested = request.path.split("/").at(-1);
+      if (data.requestId !== requested) fail();
+    }
+    if (
+      operation.operationId.endsWith("wake.get") ||
+      operation.operationId.endsWith("operation.get")
+    )
+      if (data.requestId !== request.path.split("/").at(-1)) fail();
+    if (
+      operation.operationId === "runtime_template.activate" &&
+      data.sandboxId !== record(request.body).sandboxId
+    )
+      fail();
+    return data;
+  };
+  if (operation.operationId === "runtime_template.list") {
+    if (!Array.isArray(value)) fail();
+    for (const item of value as unknown[]) check(item);
+  } else check(value);
+}

@@ -15,6 +15,7 @@
   },
   "files": [
     "dist",
+    "src/catalog-provenance.json",
     "LICENSE",
     "README.md"
   ],
@@ -33,7 +34,12 @@
     "parity:update": "node scripts/import-dotnet-catalog.mjs",
     "prepack": "pnpm clean && pnpm build",
     "test": "vitest run",
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p . --noEmit",
+    "parity:runtime": "node scripts/import-runtime-catalog.mjs --check",
+    "parity:runtime:update": "node scripts/import-runtime-catalog.mjs",
+    "catalog:provenance:update": "node scripts/catalog-provenance.mjs --update",
+    "catalog:revision": "node scripts/catalog-provenance.mjs --revision",
+    "parity:canonical": "node scripts/catalog-provenance.mjs --check-source && pnpm parity && pnpm parity:runtime"
   },
   "dependencies": {
     "commander": "^14.0.3",

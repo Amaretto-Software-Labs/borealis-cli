@@ -22,6 +22,25 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm catalog:check
+      - name: Require immutable canonical catalog provenance
+        id: canonical
+        run: |
+          set -euo pipefail
+          revision="$(node scripts/catalog-provenance.mjs --revision)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out pinned canonical Borealis source
+        uses: actions/checkout@v5
+        with:
+          repository: Amaretto-Software-Labs/borealis
+          ref: ${{ steps.canonical.outputs.revision }}
+          path: canonical-borealis
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.BOREALIS_CATALOG_READ_TOKEN || github.token }}
+      - name: Verify both catalogs against the immutable canonical revision
+        env:
+          BOREALIS_SOURCE_ROOT: ${{ github.workspace }}/canonical-borealis
+        run: pnpm parity:canonical
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint

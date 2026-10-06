@@ -7,7 +7,11 @@ import {
 } from "./api-client.js";
 import { deleteSession } from "./session-store.js";
 import { login, resolveAccessToken } from "./auth.js";
-import { operations, resolveOperation } from "./catalog.js";
+import {
+  operations,
+  resolveOperation,
+  runtimeLifecycleMappings,
+} from "./catalog.js";
 import { completion } from "./completion.js";
 import { validateCommandGrammar } from "./command-grammar.js";
 import { defaults, validateOrigin } from "./config.js";
@@ -301,7 +305,12 @@ async function runInternal(
     );
   }
   if (request.waitTimeoutSeconds !== undefined)
-    result = await client.waitFor(result, request.waitTimeoutSeconds);
+    result =
+      /^(logical_machine|runtime_template)\./.test(
+        resolved.operation.operationId,
+      ) || Boolean(runtimeLifecycleMappings[resolved.operation.operationId])
+        ? await client.waitForRuntime(result, request.waitTimeoutSeconds)
+        : await client.waitFor(result, request.waitTimeoutSeconds);
   if (
     resolved.operation.operationId === "organization.list" &&
     result &&
@@ -431,6 +440,20 @@ async function runInternal(
   }
   writeResult(result, options.json);
   if (
+    (/^(logical_machine|runtime_template)\./.test(
+      resolved.operation.operationId,
+    ) ||
+      Boolean(runtimeLifecycleMappings[resolved.operation.operationId])) &&
+    result &&
+    typeof result === "object"
+  ) {
+    const state = String(
+      (result as Record<string, unknown>).state ?? "",
+    ).toLowerCase();
+    if (state === "outcomeunknown") return 4;
+    if (state === "failed") return 3;
+  }
+  if (
     resolved.operation.operationId === "sandbox.workspace.import" &&
     result &&
     typeof result === "object" &&
@@ -457,6 +480,19 @@ export async function run(
     validateCommandGrammar(argv);
     return await runInternal(argv, signal);
   } catch (error) {
+    if (error instanceof AmbiguousDispatchError) {
+      if (argv.includes("--json"))
+        writeResult(
+          {
+            error: "ambiguous_outcome",
+            idempotencyKey: error.idempotencyKey,
+            message: error.message,
+          },
+          true,
+        );
+      else process.stderr.write(`${error.message}\n`);
+      return signal?.aborted ? 130 : 4;
+    }
     if (error instanceof AggregateError) {
       process.stderr.write(`Warning: ${error.message}\n`);
       return signal?.aborted ? 130 : 1;

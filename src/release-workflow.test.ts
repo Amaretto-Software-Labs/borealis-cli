@@ -20,6 +20,21 @@ describe("release workflow", () => {
     expect(workflow).not.toMatch(/channel="\$\{\{/);
   });
 
+  it("fails explicit publish intent instead of succeeding with disabled trusted publishing", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/release.yml", import.meta.url),
+      "utf8",
+    );
+    expect(workflow).toContain(
+      "github.event_name == 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true'",
+    );
+    expect(workflow).toContain("An explicit release requested publication");
+    expect(workflow).toContain("exit 1");
+    expect(workflow).toContain(
+      "github.event_name != 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true'",
+    );
+  });
+
   it("isolates packaging from the only provenance-enabled publish job", async () => {
     const workflow = await readFile(
       new URL("../.github/workflows/release.yml", import.meta.url),

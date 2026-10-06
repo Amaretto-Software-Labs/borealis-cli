@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
+import { runtimeLifecycleMappings } from "./catalog.js";
 import type { Operation } from "./types.js";
 import { readOwnerOnlySecretFile } from "./secret-file.js";
 
@@ -384,7 +385,11 @@ export async function prepareRequest(
     remap("name", "agentName");
     remap("slots", "capacitySlots");
   }
-  if (operation.operationId === "sandbox.create") {
+  if (
+    ["sandbox.create", "logical_machine.allocate"].includes(
+      operation.operationId,
+    )
+  ) {
     remap("arg", "args");
     remap("workdir", "workingDirectory");
     remap("idleTimeout", "idleTimeoutMinutes");
@@ -474,6 +479,24 @@ export async function prepareRequest(
     }
   }
 
+  if (operation.operationId === "logical_machine.turn.complete") {
+    const watermark = values.outputWatermark ?? body?.outputWatermark;
+    if (!Number.isSafeInteger(watermark) || Number(watermark) < 0)
+      throw new Error(
+        "Runtime v2 outputWatermark must be an exact non-negative safe integer.",
+      );
+    const capture = values.captureBoundaryId ?? body?.captureBoundaryId;
+    if (
+      typeof capture !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        capture,
+      )
+    )
+      throw new Error(
+        "Runtime v2 turn completion requires a stable UUID captureBoundaryId.",
+      );
+  }
+
   const query = new URLSearchParams();
   if (operation.method === "GET") {
     for (const [key, value] of Object.entries(values)) {
@@ -493,10 +516,31 @@ export async function prepareRequest(
   if (body) delete body.idempotencyKey;
   if (operation.operationId === "snapshot.create" && body)
     delete body.requestId;
+  const runtimeOperation = /^(logical_machine|runtime_template)\./.test(
+    operation.operationId,
+  );
+  if (
+    runtimeOperation &&
+    operation.idempotency === "idempotency-key" &&
+    (!explicit ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        explicit,
+      ))
+  )
+    throw new Error(
+      "Runtime v2 mutations require an explicit UUID --idempotency-key; preserve it for reconciliation.",
+    );
+  if (
+    operation.operationId === "logical_machine.checkpoint.pin" &&
+    explicit !== targets.pinId
+  )
+    throw new Error("Checkpoint pin identity must match --idempotency-key.");
   const resolvedIdempotencyKey =
     operation.idempotency === "idempotency-key"
       ? (explicit ?? randomUUID())
-      : undefined;
+      : runtimeLifecycleMappings[operation.operationId]
+        ? explicit
+        : undefined;
   if (
     operation.operationId === "billing.top_up.create" &&
     body &&

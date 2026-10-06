@@ -90,6 +90,22 @@ type BooleanOption = (typeof booleanOptions)[number];
 const operationOptions: Readonly<
   Record<string, readonly (ValueOption | BooleanOption)[]>
 > = {
+  "logical_machine.allocate": [
+    "name",
+    "image",
+    "cpu",
+    "memory",
+    "kind",
+    "wait",
+    "timeout",
+  ],
+  "logical_machine.wake": ["wait", "timeout"],
+  "logical_machine.start": ["wait", "timeout"],
+  "runtime_template.activate": ["wait", "timeout"],
+  "sandbox.start": ["idempotency-key", "wait", "timeout"],
+  "sandbox.resume": ["idempotency-key", "wait", "timeout"],
+  "sandbox.stop": ["idempotency-key"],
+  "sandbox.delete": ["idempotency-key"],
   "sandbox.create": [
     "name",
     "image",

@@ -93,6 +93,11 @@ describe("credential dispatch safety", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
+        new Response('{"runtimeKind":"container"}', {
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
         new Response('{"preflightToken":"proof"}', {
           status: 200,
           headers: { "content-type": "application/json" },

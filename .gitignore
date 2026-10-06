@@ -3,3 +3,5 @@ node_modules/
 *.tgz
 .DS_Store
 coverage/
+
+canonical-borealis/

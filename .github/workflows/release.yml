@@ -39,6 +39,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify committed public operation catalog
         run: pnpm catalog:check
+      - name: Require immutable canonical catalog provenance
+        id: canonical
+        run: |
+          set -euo pipefail
+          revision="$(node scripts/catalog-provenance.mjs --revision)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out pinned canonical Borealis source
+        uses: actions/checkout@v5
+        with:
+          repository: Amaretto-Software-Labs/borealis
+          ref: ${{ steps.canonical.outputs.revision }}
+          path: canonical-borealis
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.BOREALIS_CATALOG_READ_TOKEN || github.token }}
+      - name: Verify both catalogs against the immutable canonical revision
+        env:
+          BOREALIS_SOURCE_ROOT: ${{ github.workspace }}/canonical-borealis
+        run: pnpm parity:canonical
       - run: pnpm test && pnpm typecheck && pnpm lint && pnpm format:check
       - name: Resolve release version
         id: release
@@ -98,6 +117,11 @@ jobs:
         with:
           name: borealis-cli-npm-package
           path: ${{ runner.temp }}/publish-package
+      - name: Reject explicit release when trusted publishing is disabled
+        if: ${{ github.event_name == 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
+        run: |
+          echo "::error::An explicit release requested publication, but trusted npm publishing is disabled. Complete the approved trusted-publisher bootstrap before retrying."
+          exit 1
       - name: Publish with trusted provenance
         if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' }}
         shell: bash
@@ -108,5 +132,5 @@ jobs:
           npm --version
           npm publish "${tarballs[0]}" --ignore-scripts --access public --tag "${{ needs.package.outputs.tag }}"
       - name: Report disabled publishing
-        if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
         run: echo "Package validation completed; npm publishing is disabled until trusted-publisher bootstrap is complete."

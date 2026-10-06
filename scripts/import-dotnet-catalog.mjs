@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 
@@ -20,10 +20,6 @@ const registrySource = resolve(
   sourceRoot,
   "backend/Borealis.SaaS.Cli/CommandLine/BorealisSaaSCliCommandRegistry.cs",
 );
-const clientSource = resolve(
-  sourceRoot,
-  "backend/Borealis.Client/BorealisClient.cs",
-);
 const destination = resolve(import.meta.dirname, "../src/operations.json");
 const text = await readFile(source, "utf8");
 const expression =
@@ -41,51 +37,19 @@ const allOperations = [...text.matchAll(expression)].map((match) => ({
 const operations = allOperations.filter(
   (operation) => !operation.operationId.startsWith("admin."),
 );
-const keyed = new Set([
-  "sandbox.create",
-  "sandbox.exec.start",
-  "sandbox.exec.transient",
-  "sandbox.port.register",
-  "sandbox.workspace.import",
-  "snapshot.create",
-  "host_pool.create",
-  "host_enrollment.create",
-  "registry.create",
-  "template.create",
-  "interactive.create",
-  "interactive.stdin",
-  "service_principal.create",
-  "billing.checkout.create",
-  "billing.top_up.create",
-]);
-const targetStatePost = new Set([
-  "sandbox.start",
-  "sandbox.stop",
-  "sandbox.resume",
-  "registry.validate",
-  "sandbox.exec.cancel",
-  "interactive.stop",
-  "interactive.resize",
-  "snapshot.delete",
-  "host.drain",
-  "host.resume",
-  "host.disable",
-  "host.enable",
-  "host.evict",
-]);
-const paged = new Set([
-  "sandbox.list",
-  "snapshot.list",
-  "registry.list",
-  "template.list",
-  "host_pool.list",
-  "host.list",
-  "service_principal.list",
-  "interactive.list",
-  "billing.usage.list",
-  "billing.consumers.list",
-  "billing.invoices.list",
-]);
+function catalogSet(name) {
+  const section = text.match(
+    new RegExp(
+      `${name} = new HashSet<string>\\(StringComparer.Ordinal\\)\\s*\\{(.*?)\\};`,
+      "s",
+    ),
+  )?.[1];
+  if (!section) throw new Error(`Cannot resolve canonical ${name}.`);
+  return new Set([...section.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+}
+const keyed = catalogSet("KeyedOperations");
+const targetStatePost = catalogSet("TargetStatePostOperations");
+const paged = catalogSet("PagedOperations");
 for (const operation of operations) {
   operation.ownership = operation.operationId.startsWith("profile.")
     ? "subject"
@@ -108,9 +72,9 @@ for (const operation of operations) {
   operation.requiresPreflight = operation.risk === "destructive";
 }
 
-if (allOperations.length !== 119 || operations.length !== 75) {
+if (allOperations.length !== 115 || operations.length !== 85) {
   throw new Error(
-    `Expected 119 canonical and 75 public non-admin operations; parsed ${allOperations.length} and ${operations.length}.`,
+    `Expected 115 canonical and 85 public non-admin operations; parsed ${allOperations.length} and ${operations.length}.`,
   );
 }
 const [registry, client, typescriptClient, typescriptClientTests] =
@@ -119,7 +83,24 @@ const [registry, client, typescriptClient, typescriptClientTests] =
       if (error?.code === "ENOENT") return undefined;
       throw error;
     }),
-    readFile(clientSource, "utf8"),
+    readdir(resolve(sourceRoot, "backend/Borealis.Client")).then(
+      async (files) =>
+        (
+          await Promise.all(
+            files
+              .filter(
+                (file) =>
+                  file.startsWith("BorealisClient") && file.endsWith(".cs"),
+              )
+              .map((file) =>
+                readFile(
+                  resolve(sourceRoot, "backend/Borealis.Client", file),
+                  "utf8",
+                ),
+              ),
+          )
+        ).join("\n"),
+    ),
     readFile(resolve(import.meta.dirname, "../src/api-client.ts"), "utf8"),
     readFile(resolve(import.meta.dirname, "../src/api-client.test.ts"), "utf8"),
   ]);
@@ -128,20 +109,26 @@ const transportSection = text.match(
 )?.[1];
 const transportOperations = transportSection
   ? [
-      ...transportSection.matchAll(/new\("([^"]+)",[^\n]+?"([A-Za-z]+Async)"/g),
+      ...transportSection.matchAll(
+        /new\("([^"]+)",[^\n]+?"([A-Za-z0-9]+Async)"/g,
+      ),
     ].map((match) => ({ operationId: match[1], method: match[2] }))
   : [];
 const transportMethods = transportOperations.map(({ method }) => method);
 if (
-  transportMethods.length !== 14 ||
+  transportMethods.length !== 19 ||
   transportMethods.some((method) => !client.includes(`${method}(`))
 ) {
   throw new Error(
-    `Expected all 14 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
+    `Expected all 19 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
   );
 }
 const firstPartyTransportOperations = transportOperations.filter(
-  ({ operationId }) => operationId !== "sandbox.workspace.import.legacy",
+  ({ operationId }) =>
+    operationId !== "sandbox.workspace.import.legacy" &&
+    !operationId.startsWith("runtime_image_") &&
+    operationId !== "billing.changes.stream" &&
+    operationId !== "runtime_v2.capabilities",
 );
 if (
   firstPartyTransportOperations.length !== 13 ||

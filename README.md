@@ -46,12 +46,12 @@ borealis --token-file ./token sandbox list --json
 
 ## Commands
 
-The public package exposes exactly the 75 active, customer-facing operations in the Borealis v1 catalog. Platform-administration operations are intentionally excluded. Run `borealis --help` for groups and use the canonical command paths, for example:
+The public package exposes exactly the 85 active, customer-facing operations in the Borealis v1 catalog. Platform-administration operations are intentionally excluded. Run `borealis --help` for groups and use the canonical command paths, for example:
 
 ```bash
 borealis sandbox list --page 1 --page-size 50
 borealis sandbox get 018f4c28-dc05-7e91-9f8e-11e421bb8a91 --json
-borealis sandbox create --body '{"name":"demo","image":"ubuntu:24.04"}'
+borealis sandbox create --body '{"name":"demo","runtime":{"kind":"microvm","templateId":"base","templateRevision":1,"architecture":"aarch64"}}'
 borealis host list --pool 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 borealis interactive attach 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 ```
@@ -95,7 +95,7 @@ pnpm build
 pnpm pack
 ```
 
-The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. In a Borealis source checkout, mechanically verify the 75 public commands against the canonical .NET catalog and client methods with:
+The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. In a Borealis source checkout, mechanically verify the 85 public commands against the canonical .NET catalog and client methods with:
 
 ```bash
 BOREALIS_SOURCE_ROOT=/path/to/aurora-proto pnpm parity
@@ -105,9 +105,9 @@ When validating a source revision that still contains the former .NET CLI, the s
 
 ## Release bootstrap
 
-The release workflow always validates and packages pushes to `main`, but its npm publish step remains disabled until the repository variable `NPM_TRUSTED_PUBLISHING_ENABLED` is exactly `true`.
+The release workflow validates and packages pushes to `main`. Its npm publish step runs only when the repository/environment variable `NPM_TRUSTED_PUBLISHING_ENABLED` is exactly `true`. An explicit workflow-dispatch release fails if publishing is disabled; it cannot finish successfully while silently skipping the requested publication.
 
-Because npm trusted publishing requires the package to exist first, a maintainer must bootstrap `@amaretto-software-labs/borealis-cli` once from a locally validated tarball using an npm account with 2FA:
+First check `npm view @amaretto-software-labs/borealis-cli version dist-tags`. If the package already exists, configure its trusted publisher and select an unused release version; do not repeat the bootstrap or republish an existing version. Only when the package does not exist must a maintainer bootstrap it once from a locally validated tarball using an npm account with 2FA:
 
 ```bash
 pnpm pack
@@ -119,3 +119,48 @@ After that first interactive publish, configure the npm trusted publisher for `A
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Runtime v2
+
+The CLI includes 85 canonical customer operations plus 27 conditional logical-machine/runtime-template commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
+
+Standard sandbox start/resume/stop/delete inspect the resource runtime kind and logical binding. Runtime v2 dispatch requires an explicit UUID key and uses the conditional logical-machine endpoint; existing containers retain their lifecycle during migration.
+
+Runtime v2 commands check `GET /api/v1/capabilities/runtime-v2` before dispatch. That response describes deployment support; normal organization, ownership, scope and preflight authorization still apply. Hosted MCP uses the same conditional catalogs, so disabled deployments do not advertise these tools.
+
+Provide an explicit UUID key for every keyed Runtime v2 mutation. Keep the same key and payload on retry. Turn renewal extends a bounded activity lease; template retirement reconciles the same revision target state and prevents new activations while existing machines retain their recovery baseline.
+
+```bash
+borealis logical-machine allocate --idempotency-key "$REQUEST_ID" --body '{"name":"worker","runtime":{"kind":"microvm","templateId":"base","templateRevision":1,"architecture":"aarch64","resources":{"vcpu":1,"memoryMiB":1024,"rootDiskGiB":2}}}'
+borealis logical-machine allocation by-request "$REQUEST_ID"
+borealis logical-machine get "$VM_ID"
+borealis logical-machine wake "$VM_ID" --idempotency-key "$WAKE_REQUEST_ID" --wait --timeout 60
+borealis logical-machine turn begin "$VM_ID" --idempotency-key "$TURN_REQUEST_ID" --set leaseSeconds=300
+borealis logical-machine turn renew "$VM_ID" "$TURN_ID" --set leaseSeconds=300
+borealis logical-machine turn complete "$VM_ID" "$TURN_ID" --idempotency-key "$COMPLETE_REQUEST_ID" --body '{"captureBoundaryId":"CAPTURE_UUID","outputWatermark":42}'
+borealis logical-machine operation get "$VM_ID" "$COMPLETE_REQUEST_ID"
+borealis runtime-template retire "$TEMPLATE_ID" "$REVISION"
+```
+
+Allocation, wake, start and template activation support bounded `--wait`; a committed wake establishes execution readiness. Only successful independently verified checkpoint commit establishes durable turn output. Suspended processes preserve local state but make no progress, and external connections may need reconnecting.
+
+Use `--json` for structured results. Exit codes are 0 for accepted/successful calls, 1 for input/local failures, 2 for authorization failures, 3 for API/terminal operation failures, 4 for ambiguous dispatch or `OutcomeUnknown`, and 130 for cancellation. Ambiguous JSON includes `idempotencyKey`; the CLI never silently resubmits. Recover a lost allocation response by its original request key, or query wake/operation/turn/checkpoint status with original identifiers. A successful acceptance without `--wait` does not claim final readiness. Deletion retains explicit confirmation and API-owned `sandbox.delete` preflight.
+
+`BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity` verifies the canonical customer catalog, and `pnpm parity:runtime` separately checks conditional catalog parity. Neither command builds another CLI in the backend repository.
+
+### Canonical release provenance
+
+`pnpm catalog:check` checks all 85 ordinary and 27 conditional commands and their recorded content hashes. `src/catalog-provenance.json` records the canonical Borealis commit, whether its checkout was dirty, the relevant catalog/SDK input hashes, and both generated catalog hashes. The file is included in the npm tarball. A dirty snapshot accurately describes local integration; it does not certify that the files came from its recorded HEAD commit.
+
+After the canonical Borealis changes have been reviewed and exist in an immutable commit on `origin/main`, refresh both imports and provenance from that exact clean checkout:
+
+```sh
+BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:update
+BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:runtime:update
+BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm catalog:provenance:update
+BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:canonical
+```
+
+CI and release check out the recorded full SHA, verify it belongs to canonical `origin/main`, verify source content and checkout cleanliness, and run both catalog importers in check mode. They reject dirty provenance, modified catalog content, changed SDK methods and unreviewed source revisions. Merely changing `sourceDirty` to false cannot make a mismatched snapshot releasable. `pnpm catalog:revision` deliberately fails while the recorded source is dirty.
+
+The canonical source repository must be readable by Actions. For a private Borealis repository, provide an approved read-only `BOREALIS_CATALOG_READ_TOKEN` (or equivalent installation-token access); the workflow does not create credentials. The fallback ephemeral `GITHUB_TOKEN` works only where it has repository read access. Fork PRs without private-source access cannot satisfy this canonical gate; a maintainer must run the check in the authorized repository before release. npm OIDC trusted publishing is a separate prerequisite. No local `.5` SDK candidate or uncommitted source snapshot should be relabelled as a published immutable revision.
