@@ -122,7 +122,7 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Runtime v2
 
-The CLI includes 85 canonical customer operations plus 27 conditional logical-machine/runtime-template commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
+The CLI includes 85 canonical customer operations plus 34 conditional logical-machine/runtime-template commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
 
 Standard sandbox start/resume/stop/delete inspect the resource runtime kind and logical binding. Runtime v2 dispatch requires an explicit UUID key and uses the conditional logical-machine endpoint; existing containers retain their lifecycle during migration.
 
@@ -150,7 +150,16 @@ Use `--json` for structured results. Exit codes are 0 for accepted/successful ca
 
 ### Canonical release provenance
 
-`pnpm catalog:check` checks all 85 ordinary and 27 conditional commands and their recorded content hashes. `src/catalog-provenance.json` records the canonical Borealis commit, whether its checkout was dirty, the relevant catalog/SDK input hashes, and both generated catalog hashes. The file is included in the npm tarball. A dirty snapshot accurately describes local integration; it does not certify that the files came from its recorded HEAD commit.
+An expired turn activity can be recovered only for observing and settling its original execution. Preserve the original expired lease, incarnation, epoch and a fresh recovery request ID before dispatch:
+
+```sh
+borealis logical-machine turn activity recover "$VM_ID" "$TURN_ID" --idempotency-key "$RECOVERY_REQUEST_ID" --body '{"expectedActivityLeaseId":"OLD_LEASE_UUID","expectedIncarnationId":"INCARNATION_UUID","expectedOwnershipEpoch":2,"leaseSeconds":300}'
+borealis logical-machine turn activity recovery get "$VM_ID" "$TURN_ID" "$RECOVERY_REQUEST_ID"
+```
+
+After recovery, renewal and completion bodies must include `expectedActivityLeaseId` from that exact recovery receipt. A lost response requires receipt reconciliation with the original request ID; never adopt another request's lease or replay execution. Recovery preserves cancellation intent and the expired lease.
+
+`pnpm catalog:check` checks all 85 ordinary and 34 conditional commands and their recorded content hashes. `src/catalog-provenance.json` records the canonical Borealis commit, whether its checkout was dirty, the relevant catalog/SDK input hashes, and both generated catalog hashes. The file is included in the npm tarball. A dirty snapshot accurately describes local integration; it does not certify that the files came from its recorded HEAD commit.
 
 After the canonical Borealis changes have been reviewed and exist in an immutable commit on `origin/main`, refresh both imports and provenance from that exact clean checkout:
 

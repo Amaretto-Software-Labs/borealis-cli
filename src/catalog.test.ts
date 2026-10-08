@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { operations, resolveOperation } from "./catalog.js";
 
 describe("public operation catalog", () => {
-  it("contains 85 base and 27 conditional Runtime v2 operations", () => {
-    expect(operations).toHaveLength(112);
+  it("contains 85 base and 34 conditional Runtime v2 operations", () => {
+    expect(operations).toHaveLength(119);
     expect(
       operations.some((operation) =>
         operation.operationId.startsWith("admin."),
@@ -11,9 +11,9 @@ describe("public operation catalog", () => {
     ).toBe(false);
     expect(
       new Set(operations.map((operation) => operation.operationId)).size,
-    ).toBe(112);
+    ).toBe(119);
     expect(new Set(operations.map((operation) => operation.command)).size).toBe(
-      112,
+      119,
     );
   });
 
@@ -45,7 +45,7 @@ describe("public operation catalog", () => {
       operations.filter(
         (operation) => operation.idempotency === "idempotency-key",
       ),
-    ).toHaveLength(30);
+    ).toHaveLength(34);
     expect(
       operations.filter((operation) => operation.paging === "page"),
     ).toHaveLength(11);

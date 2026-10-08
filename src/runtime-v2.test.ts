@@ -46,6 +46,110 @@ describe("Runtime v2 client contract", () => {
     });
   });
 
+  it("binds recovery and completion to exact activity identities", async () => {
+    const recover = operations.find(
+      (op) => op.operationId === "logical_machine.turn.activity.recover",
+    )!;
+    const receipt = operations.find(
+      (op) => op.operationId === "logical_machine.turn.activity.recovery.get",
+    )!;
+    const body = {
+      expectedActivityLeaseId: key,
+      expectedIncarnationId: vm,
+      expectedOwnershipEpoch: 2,
+      leaseSeconds: 300,
+    };
+    const request = await prepareRequest(recover, [
+      vm,
+      vm,
+      "--idempotency-key",
+      key,
+      "--body",
+      JSON.stringify(body),
+    ]);
+    expect(request.body).toEqual(body);
+    expect(request.idempotencyKey).toBe(key);
+    expect(recover.scope).toBe("borealis.sandboxes.exec");
+    expect(receipt.scope).toBe("borealis.sandboxes.exec");
+    const complete = operations.find(
+      (op) => op.operationId === "logical_machine.turn.complete",
+    )!;
+    expect(
+      (
+        await prepareRequest(complete, [
+          vm,
+          vm,
+          "--idempotency-key",
+          key,
+          "--body",
+          JSON.stringify({
+            captureBoundaryId: key,
+            outputWatermark: 42,
+            expectedActivityLeaseId: vm,
+          }),
+        ])
+      ).body,
+    ).toEqual({
+      captureBoundaryId: key,
+      outputWatermark: 42,
+      expectedActivityLeaseId: vm,
+    });
+    const renew = operations.find(
+      (op) => op.operationId === "logical_machine.turn.renew",
+    )!;
+    expect(
+      (
+        await prepareRequest(renew, [
+          vm,
+          vm,
+          "--body",
+          JSON.stringify({ leaseSeconds: 300, expectedActivityLeaseId: key }),
+        ])
+      ).body,
+    ).toEqual({ leaseSeconds: 300, expectedActivityLeaseId: key });
+  });
+
+  it("rejects a recovery receipt from another request without replay", async () => {
+    const recover = operations.find(
+      (op) => op.operationId === "logical_machine.turn.activity.recover",
+    )!;
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ enabled: true, operations: [recover.operationId] }),
+      )
+      .mockResolvedValueOnce(
+        json({
+          requestId: vm,
+          sandboxId: vm,
+          turnId: vm,
+          activityLeaseId: key,
+          incarnationId: vm,
+          ownershipEpoch: 2,
+          expiresAt: "2030-01-01T00:00:00Z",
+        }),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      client().invoke(
+        recover,
+        await prepareRequest(recover, [
+          vm,
+          vm,
+          "--idempotency-key",
+          key,
+          "--body",
+          JSON.stringify({
+            expectedActivityLeaseId: key,
+            expectedIncarnationId: vm,
+            expectedOwnershipEpoch: 2,
+          }),
+        ]),
+      ),
+    ).rejects.toBeInstanceOf(AmbiguousDispatchError);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses disabled feature discovery without dispatch", async () => {
     const fetcher = vi
       .fn()

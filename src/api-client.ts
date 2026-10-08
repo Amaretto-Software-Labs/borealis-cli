@@ -1195,6 +1195,37 @@ function validateRuntimeResult(
       data.requestId !== request.idempotencyKey
     )
       fail();
+    if (
+      [
+        "logical_machine.turn.activity.recover",
+        "logical_machine.turn.activity.recovery.get",
+      ].includes(operation.operationId)
+    ) {
+      const turn = request.path.match(/\/turns\/([^/]+)/)?.[1];
+      const expectedRequest =
+        operation.method === "GET"
+          ? request.path.split("/").at(-1)
+          : request.idempotencyKey;
+      if (
+        data.requestId !== expectedRequest ||
+        data.turnId !== turn ||
+        !uuid(data.activityLeaseId) ||
+        !uuid(data.incarnationId) ||
+        !Number.isSafeInteger(data.ownershipEpoch) ||
+        Number(data.ownershipEpoch) < 1 ||
+        typeof data.expiresAt !== "string" ||
+        !Number.isFinite(Date.parse(data.expiresAt))
+      )
+        fail();
+      if (operation.method !== "GET") {
+        const body = record(request.body);
+        if (
+          data.incarnationId !== body.expectedIncarnationId ||
+          data.ownershipEpoch !== body.expectedOwnershipEpoch
+        )
+          fail();
+      }
+    }
     if (operation.operationId.startsWith("logical_machine.allocation.")) {
       const requested = request.path.split("/").at(-1);
       if (data.requestId !== requested) fail();

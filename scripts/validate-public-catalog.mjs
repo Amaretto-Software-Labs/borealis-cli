@@ -37,9 +37,9 @@ const runtime = JSON.parse(
 );
 const all = [...operations, ...runtime];
 if (
-  runtime.length !== 27 ||
-  new Set(all.map((item) => item.operationId)).size !== 112 ||
-  new Set(all.map((item) => item.command)).size !== 112 ||
+  runtime.length !== 34 ||
+  new Set(all.map((item) => item.operationId)).size !== 119 ||
+  new Set(all.map((item) => item.command)).size !== 119 ||
   runtime.some(
     (item) =>
       !/^(logical_machine|runtime_template)\./.test(item.operationId) ||
@@ -48,7 +48,7 @@ if (
   )
 )
   throw new Error(
-    "The committed conditional catalog must contain exactly 27 unique organization-scoped Runtime v2 operations without colliding with public commands.",
+    "The committed conditional catalog must contain exactly 34 unique organization-scoped Runtime v2 operations without colliding with public commands.",
   );
 await validateProvenance(
   JSON.parse(
@@ -60,5 +60,5 @@ await validateProvenance(
   resolve(import.meta.dirname, "../src"),
 );
 process.stdout.write(
-  "Verified 27 conditional operations and provenance for all 112 commands.\n",
+  "Verified 34 conditional operations and provenance for all 119 commands.\n",
 );
