@@ -26,6 +26,32 @@ const json = (value: unknown, status = 200) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Runtime v2 client contract", () => {
+  it("cancels the exact queued wake without creating a new request identity", async () => {
+    const cancel = operations.find(
+      (op) => op.operationId === "logical_machine.wake.cancel",
+    )!;
+    expect(cancel.idempotency).toBe("target-state");
+    const request = await prepareRequest(cancel, [vm, key]);
+    expect(request.path).toBe(
+      `/api/v1/sandboxes/${vm}/runtime/wakes/${key}/cancel`,
+    );
+    expect(request.idempotencyKey).toBeUndefined();
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ enabled: true, operations: [cancel.operationId] }),
+      )
+      .mockResolvedValueOnce(
+        json({ requestId: key, sandboxId: vm, state: "Cancelled" }),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    await expect(client().invoke(cancel, request)).resolves.toMatchObject({
+      state: "Cancelled",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  });
+
   it("requires a stable caller identity before mutation and preserves checkpoint fields", async () => {
     await expect(prepareRequest(wake, [vm])).rejects.toThrow("explicit UUID");
     const complete = operations.find(

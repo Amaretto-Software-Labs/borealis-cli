@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
   "repository": "Amaretto-Software-Labs/borealis",
-  "sourceCommit": "4010c26421dcd54b8e7f1741d35489a5a27a9fc1",
+  "sourceCommit": "9c0ca1d2600cf62d3a8b049c1f3f7f644c99239d",
   "sourceDirty": false,
-  "sourceContentSha256": "39b41de9396cc3807630be9f69bfd04989d4d7fd46fe4a8579ff4af34683bec9",
+  "sourceContentSha256": "18b8dc461eaff8610aa6dede8ae40fc4597a60c1c4e123cf4cb1774bf5c4d7e1",
   "sourceFiles": {
     "backend/Borealis.Api.Contracts/V1/BorealisOperationCatalog.cs": "a3bf49c98b977c399442c56f29de5a1dffd52394db1b0e96147f7cef3826ebc8",
     "backend/Borealis.Api.Contracts/V1/BorealisRuntimeTemplateOperationCatalog.cs": "4daad36f70ed171dfa629e3601d6298692cef289a721f2a60b2011e6ac3c71aa",
-    "backend/Borealis.Api.Contracts/V1/BorealisRuntimeV2OperationCatalog.cs": "a6178995c407e5fbb88eb8bb38289c63ee60a257cb11b530917bbcb374890807",
-    "backend/Borealis.Client/BorealisClient.LogicalMachines.cs": "e81d398161ae2321522876fd2afedf60f564a4acc7997a16a9c25be2b3ef349f",
+    "backend/Borealis.Api.Contracts/V1/BorealisRuntimeV2OperationCatalog.cs": "296793fbe9df443800c7f68661cf74a7002aa7ce231eabf2140528bee06001b1",
+    "backend/Borealis.Client/BorealisClient.LogicalMachines.cs": "4e8bc7a17a9690370a1a0c85a64316d078b3c470a44b29420d1ab619d55827d9",
     "backend/Borealis.Client/BorealisClient.RuntimeTemplates.cs": "4c32830076a37c275736c7c265571e3ad2cac80aa807a7ed8da668a6bb299d0e",
     "backend/Borealis.Client/BorealisClient.cs": "7b81367e1541294a24367a830070f4e628dd309e876e2aed6aca4a09751460ba",
     "backend/Borealis.Client/BorealisClientOptions.cs": "1c5ec05a531457215a8b5b5612de1ff291ff0274f42f9fa27fb546839fe9d2a1"
   },
   "catalogSha256": {
     "operations.json": "6fc2ea53e1cb4ed1438422257144be4b3baabe303836ac12dea38a93542e2a46",
-    "runtime-operations.json": "a44d4e776f9fd48c1cfc2a6c485cc65ca17d8f05daaf4c6e924e1858d6a40348"
+    "runtime-operations.json": "2e17fec6f831b578ce02a841cfab877a9aee4d50d114bce03add98b684e018f7"
   }
 }

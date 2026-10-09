@@ -405,6 +405,21 @@
     "requiresPreflight": false
   },
   {
+    "operationId": "logical_machine.wake.cancel",
+    "method": "POST",
+    "path": "/api/v1/sandboxes/{sandboxId}/runtime/wakes/{requestId}/cancel",
+    "scope": "borealis.sandboxes.write",
+    "risk": "write",
+    "clientMethod": "CancelLogicalMachineWakeAsync",
+    "idempotency": "target-state",
+    "command": "logical-machine wake cancel",
+    "mcpName": "logical_machine_wake_cancel",
+    "ownership": "organization",
+    "retry": "never-after-dispatch",
+    "paging": "none",
+    "requiresPreflight": false
+  },
+  {
     "operationId": "logical_machine.wake.get",
     "method": "GET",
     "path": "/api/v1/sandboxes/{sandboxId}/runtime/wakes/{requestId}",
