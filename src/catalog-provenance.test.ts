@@ -203,17 +203,25 @@ describe("catalog release provenance", () => {
       ),
     ).rejects.toThrow("invalid");
   });
-  it("checks all runtime operations and both provenance gates in CI and release workflows", async () => {
-    for (const name of ["ci.yml", "release.yml"]) {
-      const text = await readFile(
-        new URL(`../.github/workflows/${name}`, import.meta.url),
-        "utf8",
-      );
-      expect(text).toContain("catalog-provenance.mjs --revision");
-      expect(text).toContain("repository: Amaretto-Software-Labs/borealis");
-      expect(text).toContain("ref: ${{ steps.canonical.outputs.revision }}");
-      expect(text).toContain("persist-credentials: false");
-      expect(text).toContain("pnpm parity:canonical");
-    }
+  it("keeps strict canonical source verification in release while CI needs no private-source credentials", async () => {
+    const release = await readFile(
+      new URL("../.github/workflows/release.yml", import.meta.url),
+      "utf8",
+    );
+    expect(release).toContain("catalog-provenance.mjs --revision");
+    expect(release).toContain("repository: Amaretto-Software-Labs/borealis");
+    expect(release).toContain("ref: ${{ steps.canonical.outputs.revision }}");
+    expect(release).toContain("persist-credentials: false");
+    expect(release).toContain("pnpm parity:canonical");
+    const ci = await readFile(
+      new URL("../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    expect(ci).toContain("pnpm catalog:check");
+    expect(ci).toContain("pnpm test");
+    expect(ci).toContain("pnpm pack");
+    expect(ci).not.toContain("repository: Amaretto-Software-Labs/borealis");
+    expect(ci).not.toContain("BOREALIS_CATALOG_READ_TOKEN");
+    expect(ci).not.toContain("parity:canonical");
   });
 });

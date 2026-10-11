@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as credentialFiles from "./credential-file.js";
 import { BorealisApiClient } from "./api-client.js";
 import { parseAuthLoginOptions, resolveApiBase, run } from "./app.js";
 
@@ -348,10 +349,16 @@ describe("credential dispatch safety", () => {
     const destination = join(temporary, "existing-secret");
     await writeFile(destination, "do not replace");
     const controller = new AbortController();
+    const writeCredentialFile = credentialFiles.writeCredentialFile;
+    vi.spyOn(credentialFiles, "writeCredentialFile").mockImplementation(
+      async (...args) => {
+        controller.abort();
+        return writeCredentialFile(...args);
+      },
+    );
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => {
-        setTimeout(() => controller.abort(), 0);
         return new Response(
           JSON.stringify({
             clientId: "client-1",
