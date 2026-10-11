@@ -452,6 +452,7 @@ async function runInternal(
     ).toLowerCase();
     if (state === "outcomeunknown") return 4;
     if (state === "failed") return 3;
+    if (state === "cancelled") return 130;
   }
   if (
     resolved.operation.operationId === "sandbox.workspace.import" &&

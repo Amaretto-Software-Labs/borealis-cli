@@ -332,6 +332,103 @@ describe("Runtime v2 client contract", () => {
     );
   });
 
+  it("returns an already cancelled receipt without polling", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const receipt = { requestId: key, sandboxId: vm, state: "Cancelled" };
+    await expect(client().waitForRuntime(receipt, 2)).resolves.toEqual(receipt);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("preserves cancellation observed while polling mixed-case UUIDs", async () => {
+    const receipt = { requestId: key, sandboxId: vm, state: "Cancelled" };
+    const fetcher = vi.fn().mockResolvedValue(json(receipt));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      client().waitForRuntime(
+        {
+          requestId: key.toUpperCase(),
+          sandboxId: vm.toUpperCase(),
+          state: "Requested",
+        },
+        2,
+      ),
+    ).resolves.toEqual(receipt);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("accepts matching mixed-case wake request identities", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          json({ enabled: true, operations: [wake.operationId] }),
+        )
+        .mockResolvedValueOnce(
+          json({ requestId: key, sandboxId: vm, state: "Committed" }),
+        ),
+    );
+    await expect(
+      client().invoke(
+        wake,
+        await prepareRequest(wake, [
+          vm.toUpperCase(),
+          "--idempotency-key",
+          key.toUpperCase(),
+        ]),
+      ),
+    ).resolves.toMatchObject({ state: "Committed" });
+  });
+
+  it.each([
+    "logical_machine.turn.activity.recover",
+    "logical_machine.turn.activity.recovery.get",
+  ])(
+    "accepts matching mixed-case recovery identities for %s",
+    async (operationId) => {
+      const operation = operations.find(
+        (op) => op.operationId === operationId,
+      )!;
+      const receipt = {
+        requestId: key,
+        sandboxId: vm,
+        turnId: vm,
+        activityLeaseId: key,
+        incarnationId: vm,
+        ownershipEpoch: 2,
+        expiresAt: "2030-01-01T00:00:00Z",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            json({ enabled: true, operations: [operationId] }),
+          )
+          .mockResolvedValueOnce(json(receipt)),
+      );
+      const args =
+        operation.method === "GET"
+          ? [vm.toUpperCase(), vm.toUpperCase(), key.toUpperCase()]
+          : [
+              vm.toUpperCase(),
+              vm.toUpperCase(),
+              "--idempotency-key",
+              key.toUpperCase(),
+              "--body",
+              JSON.stringify({
+                expectedActivityLeaseId: key.toUpperCase(),
+                expectedIncarnationId: vm.toUpperCase(),
+                expectedOwnershipEpoch: 2,
+              }),
+            ];
+      await expect(
+        client().invoke(operation, await prepareRequest(operation, args)),
+      ).resolves.toEqual(receipt);
+    },
+  );
+
   it("rejects reconciliation for another machine", async () => {
     vi.stubGlobal(
       "fetch",

@@ -388,7 +388,9 @@ export class BorealisApiClient {
     let current = wake;
     while (Date.now() < deadline) {
       const state = String(current.state).toLowerCase();
-      if (["committed", "failed", "outcomeunknown"].includes(state))
+      if (
+        ["committed", "failed", "outcomeunknown", "cancelled"].includes(state)
+      )
         return current;
       await delay(Math.min(1000, deadline - Date.now()), undefined, {
         signal: this.options.signal,
@@ -403,8 +405,8 @@ export class BorealisApiClient {
         Math.min(this.options.requestTimeoutMs ?? 30000, remaining),
       )) as Record<string, unknown>;
       if (
-        current.requestId !== wake.requestId ||
-        current.sandboxId !== wake.sandboxId
+        !sameUuid(current.requestId, wake.requestId) ||
+        !sameUuid(current.sandboxId, wake.sandboxId)
       )
         throw new Error(
           "Runtime v2 returned a wake for a different request or machine.",
@@ -1124,6 +1126,18 @@ const operationForImport: Operation = {
   requiresPreflight: true,
 };
 
+function sameUuid(left: unknown, right: unknown): boolean {
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return (
+    typeof left === "string" &&
+    typeof right === "string" &&
+    uuid.test(left) &&
+    uuid.test(right) &&
+    left.toLowerCase() === right.toLowerCase()
+  );
+}
+
 function validateRuntimeResult(
   operation: Operation,
   request: PreparedRequest,
@@ -1192,7 +1206,7 @@ function validateRuntimeResult(
         "logical_machine.start",
         "runtime_template.activate",
       ].includes(operation.operationId) &&
-      data.requestId !== request.idempotencyKey
+      !sameUuid(data.requestId, request.idempotencyKey)
     )
       fail();
     if (
@@ -1207,8 +1221,8 @@ function validateRuntimeResult(
           ? request.path.split("/").at(-1)
           : request.idempotencyKey;
       if (
-        data.requestId !== expectedRequest ||
-        data.turnId !== turn ||
+        !sameUuid(data.requestId, expectedRequest) ||
+        !sameUuid(data.turnId, turn) ||
         !uuid(data.activityLeaseId) ||
         !uuid(data.incarnationId) ||
         !Number.isSafeInteger(data.ownershipEpoch) ||
@@ -1220,7 +1234,7 @@ function validateRuntimeResult(
       if (operation.method !== "GET") {
         const body = record(request.body);
         if (
-          data.incarnationId !== body.expectedIncarnationId ||
+          !sameUuid(data.incarnationId, body.expectedIncarnationId) ||
           data.ownershipEpoch !== body.expectedOwnershipEpoch
         )
           fail();
@@ -1228,16 +1242,16 @@ function validateRuntimeResult(
     }
     if (operation.operationId.startsWith("logical_machine.allocation.")) {
       const requested = request.path.split("/").at(-1);
-      if (data.requestId !== requested) fail();
+      if (!sameUuid(data.requestId, requested)) fail();
     }
     if (
       operation.operationId.endsWith("wake.get") ||
       operation.operationId.endsWith("operation.get")
     )
-      if (data.requestId !== request.path.split("/").at(-1)) fail();
+      if (!sameUuid(data.requestId, request.path.split("/").at(-1))) fail();
     if (
       operation.operationId === "runtime_template.activate" &&
-      data.sandboxId !== record(request.body).sandboxId
+      !sameUuid(data.sandboxId, record(request.body).sandboxId)
     )
       fail();
     return data;
