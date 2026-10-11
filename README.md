@@ -46,12 +46,12 @@ borealis --token-file ./token sandbox list --json
 
 ## Commands
 
-The public package exposes exactly the 75 active, customer-facing operations in the Borealis v1 catalog. Platform-administration operations are intentionally excluded. Run `borealis --help` for groups and use the canonical command paths, for example:
+The public package exposes exactly the 85 active, customer-facing operations in the Borealis v1 catalog. Platform-administration operations are intentionally excluded. Run `borealis --help` for groups and use the canonical command paths, for example:
 
 ```bash
 borealis sandbox list --page 1 --page-size 50
 borealis sandbox get 018f4c28-dc05-7e91-9f8e-11e421bb8a91 --json
-borealis sandbox create --body '{"name":"demo","image":"ubuntu:24.04"}'
+borealis sandbox create --body '{"name":"demo","runtime":{"kind":"microvm","templateId":"base","templateRevision":1,"architecture":"aarch64"}}'
 borealis host list --pool 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 borealis interactive attach 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 ```
@@ -95,7 +95,7 @@ pnpm build
 pnpm pack
 ```
 
-The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. In a Borealis source checkout, mechanically verify the 75 public commands against the canonical .NET catalog and client methods with:
+The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. In a Borealis source checkout, mechanically verify the 85 public commands against the canonical .NET catalog and client methods with:
 
 ```bash
 BOREALIS_SOURCE_ROOT=/path/to/aurora-proto pnpm parity
@@ -105,9 +105,9 @@ When validating a source revision that still contains the former .NET CLI, the s
 
 ## Release bootstrap
 
-The release workflow always validates and packages pushes to `main`, but its npm publish step remains disabled until the repository variable `NPM_TRUSTED_PUBLISHING_ENABLED` is exactly `true`.
+The release workflow validates and packages pushes to `main`. Its npm publish step runs only when the repository/environment variable `NPM_TRUSTED_PUBLISHING_ENABLED` is exactly `true`. An explicit workflow-dispatch release fails if publishing is disabled; it cannot finish successfully while silently skipping the requested publication.
 
-Because npm trusted publishing requires the package to exist first, a maintainer must bootstrap `@amaretto-software-labs/borealis-cli` once from a locally validated tarball using an npm account with 2FA:
+First check `npm view @amaretto-software-labs/borealis-cli version dist-tags`. If the package already exists, configure its trusted publisher and select an unused release version; do not repeat the bootstrap or republish an existing version. Only when the package does not exist must a maintainer bootstrap it once from a locally validated tarball using an npm account with 2FA:
 
 ```bash
 pnpm pack
@@ -119,3 +119,67 @@ After that first interactive publish, configure the npm trusted publisher for `A
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Runtime v2
+
+The CLI includes 85 canonical customer operations plus 35 conditional logical-machine/runtime-template commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
+
+Standard sandbox start/resume/stop/delete inspect the resource runtime kind and logical binding. Runtime v2 dispatch requires an explicit UUID key and uses the conditional logical-machine endpoint; existing containers retain their lifecycle during migration.
+
+Runtime v2 commands check `GET /api/v1/capabilities/runtime-v2` before dispatch. That response describes deployment support; normal organization, ownership, scope and preflight authorization still apply. Hosted MCP uses the same conditional catalogs, so disabled deployments do not advertise these tools.
+
+Provide an explicit UUID key for every keyed Runtime v2 mutation. Keep the same key and payload on retry. Turn renewal extends a bounded activity lease; template retirement reconciles the same revision target state and prevents new activations while existing machines retain their recovery baseline.
+
+```bash
+borealis logical-machine allocate --idempotency-key "$REQUEST_ID" --body '{"name":"worker","runtime":{"kind":"microvm","templateId":"base","templateRevision":1,"architecture":"aarch64","resources":{"vcpu":1,"memoryMiB":1024,"rootDiskGiB":2}}}'
+borealis logical-machine allocation by-request "$REQUEST_ID"
+borealis logical-machine get "$VM_ID"
+borealis logical-machine wake "$VM_ID" --idempotency-key "$WAKE_REQUEST_ID" --wait --timeout 60
+borealis logical-machine turn begin "$VM_ID" --idempotency-key "$TURN_REQUEST_ID" --set leaseSeconds=300
+borealis logical-machine turn renew "$VM_ID" "$TURN_ID" --set leaseSeconds=300
+borealis logical-machine turn complete "$VM_ID" "$TURN_ID" --idempotency-key "$COMPLETE_REQUEST_ID" --body '{"captureBoundaryId":"CAPTURE_UUID","outputWatermark":42}'
+borealis logical-machine operation get "$VM_ID" "$COMPLETE_REQUEST_ID"
+borealis runtime-template retire "$TEMPLATE_ID" "$REVISION"
+```
+
+Allocation, wake, start and template activation support bounded `--wait`; a committed wake establishes execution readiness. Only successful independently verified checkpoint commit establishes durable turn output. Suspended processes preserve local state but make no progress, and external connections may need reconnecting.
+
+Use `--json` for structured results. Exit codes are 0 for accepted/successful calls, 1 for input/local failures, 2 for authorization failures, 3 for API/terminal operation failures, 4 for ambiguous dispatch or `OutcomeUnknown`, and 130 for cancellation. Ambiguous JSON includes `idempotencyKey`; the CLI never silently resubmits. Recover a lost allocation response by its original request key, or query wake/operation/turn/checkpoint status with original identifiers. A successful acceptance without `--wait` does not claim final readiness. Deletion retains explicit confirmation and API-owned `sandbox.delete` preflight.
+
+`BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity` verifies the canonical customer catalog, and `pnpm parity:runtime` separately checks conditional catalog parity. Neither command builds another CLI in the backend repository.
+
+### Recover turn activity
+
+An expired turn activity can be recovered only for observing and settling its original execution. Preserve the original expired lease, incarnation, epoch and a fresh recovery request ID before dispatch:
+
+```sh
+borealis logical-machine turn activity recover "$VM_ID" "$TURN_ID" --idempotency-key "$RECOVERY_REQUEST_ID" --body '{"expectedActivityLeaseId":"OLD_LEASE_UUID","expectedIncarnationId":"INCARNATION_UUID","expectedOwnershipEpoch":2,"leaseSeconds":300}'
+borealis logical-machine turn activity recovery get "$VM_ID" "$TURN_ID" "$RECOVERY_REQUEST_ID"
+```
+
+After recovery, renewal and completion bodies must include `expectedActivityLeaseId` from that exact recovery receipt. A lost response requires receipt reconciliation with the original request ID; never adopt another request's lease or replay execution. Recovery preserves cancellation intent and the expired lease.
+
+### Contract parity
+
+`pnpm catalog:check` validates the 86 public and 35 conditional operations for unique commands, API paths and ownership. CI and release packaging run this check, the CLI tests, and the packed-package smoke test without private-source credentials.
+
+When updating the Borealis contracts, regenerate and compare both catalogs against the source checkout:
+
+```sh
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:update
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:runtime:update
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:runtime
+```
+
+Borealis CI runs both parity checks against the CLI revision under review, using its own source checkout. They compare API contracts and SDK methods; Git ancestry, commit provenance and private-source access from this public repository are not required. Squashing either PR does not change contract compatibility. npm publication retains its existing trusted-publishing configuration and package validation.
+
+### Prepare an image for a VM size
+
+Image build/import and VM creation are separate operations. Stage the published revision for the resource shape and target host pool before allocation:
+
+```sh
+borealis runtime-image template stage custom-image 1 --body '{"placement":{"hostPoolId":"HOST_POOL_UUID"},"resources":{"vcpu":2,"memoryMiB":4096,"rootDiskGiB":16}}'
+```
+
+A stage result with `readyHosts: 0` means preparation is pending; repeat the same stage request to observe progress. A ready host has prepared this exact template baseline. Images are staged on demand, not replicated to every host. Different VM sizes need separate preparation. A complete paused VM pool is additional, demand-driven capacity; image readiness alone does not promise a pool hit.

@@ -14,12 +14,26 @@ describe("request preparation", () => {
   it("binds every public operation to a concrete versioned route", async () => {
     for (const candidate of operations) {
       const identifiers = [...candidate.path.matchAll(/\{[^}]+\}/g)].map(
-        (_, index) => `id-${index}`,
+        (_, index) =>
+          candidate.operationId === "logical_machine.checkpoint.pin" &&
+          index === 2
+            ? "e8a5c14c-57d4-4bf0-8307-aea8bd50272c"
+            : `id-${index}`,
       );
       const args =
         candidate.operationId === "billing.auto_top_up.configure"
           ? ["--disable"]
           : identifiers;
+      if (
+        /^(logical_machine|runtime_template)\./.test(candidate.operationId) &&
+        candidate.idempotency === "idempotency-key"
+      )
+        args.push("--idempotency-key", "e8a5c14c-57d4-4bf0-8307-aea8bd50272c");
+      if (candidate.operationId === "logical_machine.turn.complete")
+        args.push(
+          "--body",
+          '{"captureBoundaryId":"e8a5c14c-57d4-4bf0-8307-aea8bd50272c","outputWatermark":0}',
+        );
       const request = await prepareRequest(candidate, args);
       expect(request.path).toMatch(/^\/api\/v1\//);
       expect(request.path).not.toContain("{");

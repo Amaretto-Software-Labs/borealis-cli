@@ -33,7 +33,9 @@
     "parity:update": "node scripts/import-dotnet-catalog.mjs",
     "prepack": "pnpm clean && pnpm build",
     "test": "vitest run",
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p . --noEmit",
+    "parity:runtime": "node scripts/import-runtime-catalog.mjs --check",
+    "parity:runtime:update": "node scripts/import-runtime-catalog.mjs"
   },
   "dependencies": {
     "commander": "^14.0.3",

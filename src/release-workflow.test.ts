@@ -20,6 +20,39 @@ describe("release workflow", () => {
     expect(workflow).not.toMatch(/channel="\$\{\{/);
   });
 
+  it("fails explicit publish intent instead of succeeding with disabled trusted publishing", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/release.yml", import.meta.url),
+      "utf8",
+    );
+    expect(workflow).toContain(
+      "github.event_name == 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true'",
+    );
+    expect(workflow).toContain("An explicit release requested publication");
+    expect(workflow).toContain("exit 1");
+    expect(workflow).toContain(
+      "github.event_name != 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true'",
+    );
+  });
+
+  it("validates the public package without private-source or Git ancestry requirements", async () => {
+    for (const file of ["ci.yml", "release.yml"]) {
+      const workflow = await readFile(
+        new URL(`../.github/workflows/${file}`, import.meta.url),
+        "utf8",
+      );
+      expect(workflow).toContain("pnpm catalog:check");
+      expect(workflow).toContain("pnpm test");
+      expect(workflow).toContain("pnpm pack");
+      expect(workflow).not.toContain("BOREALIS_CATALOG_READ_TOKEN");
+      expect(workflow).not.toContain("catalog-provenance");
+      expect(workflow).not.toContain("parity:canonical");
+      expect(workflow).not.toContain(
+        "repository: Amaretto-Software-Labs/borealis",
+      );
+    }
+  });
+
   it("isolates packaging from the only provenance-enabled publish job", async () => {
     const workflow = await readFile(
       new URL("../.github/workflows/release.yml", import.meta.url),

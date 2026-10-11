@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as credentialFiles from "./credential-file.js";
 import { BorealisApiClient } from "./api-client.js";
 import { parseAuthLoginOptions, resolveApiBase, run } from "./app.js";
 
@@ -92,6 +93,11 @@ describe("credential dispatch safety", () => {
     const sandboxId = "1a2ddb9b-71dc-5256-8382-0b0119b49586";
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(
+        new Response('{"runtimeKind":"container"}', {
+          headers: { "content-type": "application/json" },
+        }),
+      )
       .mockResolvedValueOnce(
         new Response('{"preflightToken":"proof"}', {
           status: 200,
@@ -343,10 +349,16 @@ describe("credential dispatch safety", () => {
     const destination = join(temporary, "existing-secret");
     await writeFile(destination, "do not replace");
     const controller = new AbortController();
+    const writeCredentialFile = credentialFiles.writeCredentialFile;
+    vi.spyOn(credentialFiles, "writeCredentialFile").mockImplementation(
+      async (...args) => {
+        controller.abort();
+        return writeCredentialFile(...args);
+      },
+    );
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => {
-        setTimeout(() => controller.abort(), 0);
         return new Response(
           JSON.stringify({
             clientId: "client-1",
@@ -462,4 +474,58 @@ describe("credential dispatch safety", () => {
       }
     },
   );
+});
+
+describe("Runtime v2 cancellation output", () => {
+  it("prints the cancelled wake receipt and exits 130 after waiting", async () => {
+    process.env.BOREALIS_ACCESS_TOKEN = "token";
+    const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
+    const sandboxId = "a535812b-3c64-4888-824c-928530ad9e21";
+    const receipt = { requestId, sandboxId, state: "Cancelled" };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              enabled: true,
+              operations: ["logical_machine.wake"],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ requestId, sandboxId, state: "Requested" }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(receipt), {
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+    );
+    const output = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    expect(
+      await run([
+        "--api=https://api.example",
+        "--json",
+        "logical-machine",
+        "wake",
+        sandboxId,
+        "--idempotency-key",
+        requestId,
+        "--wait",
+        "--timeout",
+        "2",
+      ]),
+    ).toBe(130);
+    expect(
+      JSON.parse(output.mock.calls.map((call) => call[0]).join("")),
+    ).toEqual(receipt);
+  });
 });

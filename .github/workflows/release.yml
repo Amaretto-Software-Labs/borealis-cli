@@ -98,6 +98,11 @@ jobs:
         with:
           name: borealis-cli-npm-package
           path: ${{ runner.temp }}/publish-package
+      - name: Reject explicit release when trusted publishing is disabled
+        if: ${{ github.event_name == 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
+        run: |
+          echo "::error::An explicit release requested publication, but trusted npm publishing is disabled. Complete the approved trusted-publisher bootstrap before retrying."
+          exit 1
       - name: Publish with trusted provenance
         if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' }}
         shell: bash
@@ -108,5 +113,5 @@ jobs:
           npm --version
           npm publish "${tarballs[0]}" --ignore-scripts --access public --tag "${{ needs.package.outputs.tag }}"
       - name: Report disabled publishing
-        if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' && vars.NPM_TRUSTED_PUBLISHING_ENABLED != 'true' }}
         run: echo "Package validation completed; npm publishing is disabled until trusted-publisher bootstrap is complete."

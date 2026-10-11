@@ -318,6 +318,11 @@ describe("BorealisApiClient", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
+        new Response('{"runtimeKind":"container"}', {
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
         new Response('{"preflightToken":"proof"}', {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -337,11 +342,11 @@ describe("BorealisApiClient", () => {
       query: new URLSearchParams(),
     });
     expect(result).toEqual({ accepted: true });
-    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({
       operationId: "sandbox.delete",
       target: { sandboxId: "sandbox-1" },
     });
-    expect(fetchMock.mock.calls[1]![1].headers).toMatchObject({
+    expect(fetchMock.mock.calls[2]![1].headers).toMatchObject({
       "x-borealis-preflight": "proof",
     });
   });

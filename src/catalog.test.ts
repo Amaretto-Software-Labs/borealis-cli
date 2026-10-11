@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { operations, resolveOperation } from "./catalog.js";
 
 describe("public operation catalog", () => {
-  it("contains exactly the 75 canonical non-admin operations", () => {
-    expect(operations).toHaveLength(75);
+  it("contains 86 base and 35 conditional Runtime v2 operations", () => {
+    expect(operations).toHaveLength(121);
     expect(
       operations.some((operation) =>
         operation.operationId.startsWith("admin."),
@@ -11,10 +11,24 @@ describe("public operation catalog", () => {
     ).toBe(false);
     expect(
       new Set(operations.map((operation) => operation.operationId)).size,
-    ).toBe(75);
+    ).toBe(121);
     expect(new Set(operations.map((operation) => operation.command)).size).toBe(
-      75,
+      121,
     );
+  });
+
+  it("exposes explicit image staging as a retryable preparation operation", () => {
+    const stage = operations.find(
+      (operation) => operation.operationId === "runtime_image_template.stage",
+    );
+    expect(stage).toMatchObject({
+      method: "POST",
+      command: "runtime-image template stage",
+      path: "/api/v1/runtime-image-templates/{templateId}/{revision}/stage",
+      scope: "borealis.runtime-images.write",
+      idempotency: "target-state",
+      retry: "safe",
+    });
   });
 
   it("resolves every command and prefers the longest command path", () => {
@@ -45,13 +59,13 @@ describe("public operation catalog", () => {
       operations.filter(
         (operation) => operation.idempotency === "idempotency-key",
       ),
-    ).toHaveLength(15);
+    ).toHaveLength(34);
     expect(
       operations.filter((operation) => operation.paging === "page"),
     ).toHaveLength(11);
     expect(
       operations.filter((operation) => operation.requiresPreflight),
-    ).toHaveLength(10);
+    ).toHaveLength(12);
     expect(
       operations
         .filter((operation) => operation.requiresPreflight)
