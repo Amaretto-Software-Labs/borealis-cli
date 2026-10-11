@@ -13,20 +13,20 @@ const operations = JSON.parse(
 const operationIds = new Set(operations.map(({ operationId }) => operationId));
 const commands = new Set(operations.map(({ command }) => command));
 if (
-  operations.length !== 85 ||
-  operationIds.size !== 85 ||
-  commands.size !== 85 ||
+  operations.length !== 86 ||
+  operationIds.size !== 86 ||
+  commands.size !== 86 ||
   operations.some(
     ({ operationId, path }) =>
       operationId.startsWith("admin.") || !path.startsWith("/api/v1/"),
   )
 ) {
   throw new Error(
-    "The committed public catalog must contain exactly 85 unique, non-admin v1 operations and commands.",
+    "The committed public catalog must contain exactly 86 unique, non-admin v1 operations and commands.",
   );
 }
 process.stdout.write(
-  "Verified 85 committed public operations with no admin surface.\n",
+  "Verified 86 committed public operations with no admin surface.\n",
 );
 
 const runtime = JSON.parse(
@@ -38,8 +38,8 @@ const runtime = JSON.parse(
 const all = [...operations, ...runtime];
 if (
   runtime.length !== 35 ||
-  new Set(all.map((item) => item.operationId)).size !== 120 ||
-  new Set(all.map((item) => item.command)).size !== 120 ||
+  new Set(all.map((item) => item.operationId)).size !== 121 ||
+  new Set(all.map((item) => item.command)).size !== 121 ||
   runtime.some(
     (item) =>
       !/^(logical_machine|runtime_template)\./.test(item.operationId) ||
@@ -60,5 +60,5 @@ await validateProvenance(
   resolve(import.meta.dirname, "../src"),
 );
 process.stdout.write(
-  "Verified 35 conditional operations and provenance for all 120 commands.\n",
+  "Verified 35 conditional operations and provenance for all 121 commands.\n",
 );

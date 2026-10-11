@@ -705,6 +705,21 @@
     "requiresPreflight": false
   },
   {
+    "operationId": "runtime_image_template.stage",
+    "method": "POST",
+    "path": "/api/v1/runtime-image-templates/{templateId}/{revision}/stage",
+    "scope": "borealis.runtime-images.write",
+    "risk": "write",
+    "clientMethod": "StageRuntimeImageTemplateAsync",
+    "command": "runtime-image template stage",
+    "mcpName": "runtime_image_template_stage",
+    "ownership": "organization",
+    "idempotency": "target-state",
+    "retry": "safe",
+    "paging": "none",
+    "requiresPreflight": false
+  },
+  {
     "operationId": "runtime_image_template.get",
     "method": "GET",
     "path": "/api/v1/runtime-image-templates/{templateId}/{revision}",

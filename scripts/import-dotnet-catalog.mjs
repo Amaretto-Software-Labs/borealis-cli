@@ -72,9 +72,9 @@ for (const operation of operations) {
   operation.requiresPreflight = operation.risk === "destructive";
 }
 
-if (allOperations.length !== 115 || operations.length !== 85) {
+if (allOperations.length !== 116 || operations.length !== 86) {
   throw new Error(
-    `Expected 115 canonical and 85 public non-admin operations; parsed ${allOperations.length} and ${operations.length}.`,
+    `Expected 116 canonical and 86 public non-admin operations; parsed ${allOperations.length} and ${operations.length}.`,
   );
 }
 const [registry, client, typescriptClient, typescriptClientTests] =

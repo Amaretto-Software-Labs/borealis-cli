@@ -173,3 +173,13 @@ BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:canonical
 CI and release check out the recorded full SHA, verify it belongs to canonical `origin/main`, verify source content and checkout cleanliness, and run both catalog importers in check mode. They reject dirty provenance, modified catalog content, changed SDK methods and unreviewed source revisions. Merely changing `sourceDirty` to false cannot make a mismatched snapshot releasable. `pnpm catalog:revision` deliberately fails while the recorded source is dirty.
 
 The canonical source repository must be readable by Actions. For a private Borealis repository, provide an approved read-only `BOREALIS_CATALOG_READ_TOKEN` (or equivalent installation-token access); the workflow does not create credentials. The fallback ephemeral `GITHUB_TOKEN` works only where it has repository read access. Fork PRs without private-source access cannot satisfy this canonical gate; a maintainer must run the check in the authorized repository before release. npm OIDC trusted publishing is a separate prerequisite. No local `.5` SDK candidate or uncommitted source snapshot should be relabelled as a published immutable revision.
+
+### Prepare an image for a VM size
+
+Image build/import and VM creation are separate operations. Stage the published revision for the resource shape and target host pool before allocation:
+
+```sh
+borealis runtime-image template stage custom-image 1 --body '{"placement":{"hostPoolId":"HOST_POOL_UUID"},"resources":{"vcpu":2,"memoryMiB":4096,"rootDiskGiB":16}}'
+```
+
+A stage result with `readyHosts: 0` means preparation is pending; repeat the same stage request to observe progress. A ready host has prepared this exact template baseline. Images are staged on demand, not replicated to every host. Different VM sizes need separate preparation. A complete paused VM pool is additional, demand-driven capacity; image readiness alone does not promise a pool hit.
