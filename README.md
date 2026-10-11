@@ -148,7 +148,7 @@ Use `--json` for structured results. Exit codes are 0 for accepted/successful ca
 
 `BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity` verifies the canonical customer catalog, and `pnpm parity:runtime` separately checks conditional catalog parity. Neither command builds another CLI in the backend repository.
 
-### Canonical release provenance
+### Recover turn activity
 
 An expired turn activity can be recovered only for observing and settling its original execution. Preserve the original expired lease, incarnation, epoch and a fresh recovery request ID before dispatch:
 
@@ -159,24 +159,20 @@ borealis logical-machine turn activity recovery get "$VM_ID" "$TURN_ID" "$RECOVE
 
 After recovery, renewal and completion bodies must include `expectedActivityLeaseId` from that exact recovery receipt. A lost response requires receipt reconciliation with the original request ID; never adopt another request's lease or replay execution. Recovery preserves cancellation intent and the expired lease.
 
-`pnpm catalog:check` checks all 85 ordinary and 35 conditional commands and their recorded content hashes. `src/catalog-provenance.json` records the canonical Borealis commit, whether its checkout was dirty, the relevant catalog/SDK input hashes, and both generated catalog hashes. The file is included in the npm tarball. A dirty snapshot accurately describes local integration; it does not certify that the files came from its recorded HEAD commit.
+### Contract parity
 
-After the canonical Borealis changes have been reviewed and exist in an immutable commit on `origin/main`, refresh both imports and provenance from that exact clean checkout:
+`pnpm catalog:check` validates the 86 public and 35 conditional operations for unique commands, API paths and ownership. CI and release packaging run this check, the CLI tests, and the packed-package smoke test without private-source credentials.
+
+When updating the Borealis contracts, regenerate and compare both catalogs against the source checkout:
 
 ```sh
-BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:update
-BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:runtime:update
-BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm catalog:provenance:update
-BOREALIS_SOURCE_ROOT=/path/to/clean/borealis pnpm parity:canonical
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:update
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:runtime:update
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:runtime
 ```
 
-CLI CI verifies committed catalog hashes and runs `node scripts/catalog-provenance.mjs --revision` to reject dirty source provenance without accessing private Borealis source. This local check does not prove source ancestry or SDK parity.
-
-Before either coordinated PR is merged, Borealis CI must pass **CLI / SDK contract parity** for the exact Borealis and public CLI commit pair being merged. The source-owning job checks out the CLI by its full SHA, verifies both catalogs against the clean Borealis PR head, checks the recorded source hashes, and requires the recorded source commit to be an ancestor of that head. Its job summary records both exact commits. An older passing pair must be rerun with the updated CLI pin after either head changes. This is PR integration evidence; it does not claim the source is reviewed `origin/main`.
-
-The stable CLI release gate separately checks out the recorded full SHA, requires reviewed canonical `origin/main` ancestry, verifies exact clean source content and runs both catalog importers in check mode. Merely changing `sourceDirty` to false cannot make a mismatched snapshot releasable. `pnpm catalog:revision` deliberately fails while the recorded source is dirty.
-
-For stable publication, the canonical source repository must be readable by the release job. For a private Borealis repository, provide an approved read-only `BOREALIS_CATALOG_READ_TOKEN` (or equivalent installation-token access); the workflow does not create credentials. The fallback ephemeral `GITHUB_TOKEN` works only where it has repository read access. CLI PR CI needs no private-source credential; coordinated premerge parity runs in Borealis itself. Stable publication still requires its separate canonical gate. npm OIDC trusted publishing is a separate prerequisite. No local `.5` SDK candidate or uncommitted source snapshot should be relabelled as a published immutable revision.
+Borealis CI runs both parity checks against the CLI revision under review, using its own source checkout. They compare API contracts and SDK methods; Git ancestry, commit provenance and private-source access from this public repository are not required. Squashing either PR does not change contract compatibility. npm publication retains its existing trusted-publishing configuration and package validation.
 
 ### Prepare an image for a VM size
 

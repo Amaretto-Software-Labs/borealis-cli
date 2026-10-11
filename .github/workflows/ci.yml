@@ -22,8 +22,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm catalog:check
-      - name: Require immutable local catalog provenance
-        run: node scripts/catalog-provenance.mjs --revision
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint

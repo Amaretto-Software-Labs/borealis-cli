@@ -2,7 +2,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
-import { validateProvenance } from "./catalog-source.mjs";
 
 const operations = JSON.parse(
   await readFile(
@@ -50,15 +49,6 @@ if (
   throw new Error(
     "The committed conditional catalog must contain exactly 35 unique organization-scoped Runtime v2 operations without colliding with public commands.",
   );
-await validateProvenance(
-  JSON.parse(
-    await readFile(
-      resolve(import.meta.dirname, "../src/catalog-provenance.json"),
-      "utf8",
-    ),
-  ),
-  resolve(import.meta.dirname, "../src"),
-);
 process.stdout.write(
-  "Verified 35 conditional operations and provenance for all 121 commands.\n",
+  "Verified 35 conditional operations and 121 unique public commands.\n",
 );

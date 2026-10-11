@@ -24,7 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
-      canonical_verified: ${{ steps.canonical_source.outputs.verified }}
     permissions:
       contents: read
     steps:
@@ -40,30 +39,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify committed public operation catalog
         run: pnpm catalog:check
-      - name: Require immutable canonical catalog provenance
-        id: canonical
-        run: |
-          set -euo pipefail
-          revision="$(node scripts/catalog-provenance.mjs --revision)"
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
-      - name: Check out pinned canonical Borealis source
-        if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
-        uses: actions/checkout@v5
-        with:
-          repository: Amaretto-Software-Labs/borealis
-          ref: ${{ steps.canonical.outputs.revision }}
-          path: canonical-borealis
-          fetch-depth: 0
-          persist-credentials: false
-          token: ${{ secrets.BOREALIS_CATALOG_READ_TOKEN || github.token }}
-      - name: Verify both catalogs against the immutable canonical revision
-        if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
-        id: canonical_source
-        env:
-          BOREALIS_SOURCE_ROOT: ${{ github.workspace }}/canonical-borealis
-        run: |
-          pnpm parity:canonical
-          echo "verified=true" >> "$GITHUB_OUTPUT"
       - run: pnpm test && pnpm typecheck && pnpm lint && pnpm format:check
       - name: Resolve release version
         id: release
@@ -130,16 +105,11 @@ jobs:
           exit 1
       - name: Publish with trusted provenance
         if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' }}
-        env:
-          CANONICAL_SOURCE_VERIFIED: ${{ needs.package.outputs.canonical_verified }}
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t tarballs < <(find "${RUNNER_TEMP}/publish-package" -type f -name '*.tgz')
           [ "${#tarballs[@]}" -eq 1 ]
-          # Environment-scoped publishing may differ from the package job's repository variable.
-          # Publication still requires successful canonical verification of this exact package.
-          test "$CANONICAL_SOURCE_VERIFIED" = true
           npm --version
           npm publish "${tarballs[0]}" --ignore-scripts --access public --tag "${{ needs.package.outputs.tag }}"
       - name: Report disabled publishing

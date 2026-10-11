@@ -35,36 +35,22 @@ describe("release workflow", () => {
     );
   });
 
-  it("keeps local immutable proof unconditional and requires canonical proof for every actual publication", async () => {
-    const workflow = await readFile(
-      new URL("../.github/workflows/release.yml", import.meta.url),
-      "utf8",
-    );
-    const step = (name: string) =>
-      workflow.split(`      - name: ${name}\n`)[1]!.split("      - ")[0]!;
-    const local = step("Require immutable canonical catalog provenance");
-    expect(local).toContain("catalog-provenance.mjs --revision");
-    expect(local).not.toContain("if:");
-    const gate =
-      "if: ${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}";
-    expect(step("Check out pinned canonical Borealis source")).toContain(gate);
-    const source = step(
-      "Verify both catalogs against the immutable canonical revision",
-    );
-    expect(source).toContain(gate);
-    expect(source.indexOf("pnpm parity:canonical")).toBeLessThan(
-      source.indexOf('echo "verified=true"'),
-    );
-    expect(workflow).toContain(
-      "canonical_verified: ${{ steps.canonical_source.outputs.verified }}",
-    );
-    const publish = step("Publish with trusted provenance");
-    expect(publish).toContain(
-      "CANONICAL_SOURCE_VERIFIED: ${{ needs.package.outputs.canonical_verified }}",
-    );
-    expect(
-      publish.indexOf('test "$CANONICAL_SOURCE_VERIFIED" = true'),
-    ).toBeLessThan(publish.indexOf("npm publish"));
+  it("validates the public package without private-source or Git ancestry requirements", async () => {
+    for (const file of ["ci.yml", "release.yml"]) {
+      const workflow = await readFile(
+        new URL(`../.github/workflows/${file}`, import.meta.url),
+        "utf8",
+      );
+      expect(workflow).toContain("pnpm catalog:check");
+      expect(workflow).toContain("pnpm test");
+      expect(workflow).toContain("pnpm pack");
+      expect(workflow).not.toContain("BOREALIS_CATALOG_READ_TOKEN");
+      expect(workflow).not.toContain("catalog-provenance");
+      expect(workflow).not.toContain("parity:canonical");
+      expect(workflow).not.toContain(
+        "repository: Amaretto-Software-Labs/borealis",
+      );
+    }
   });
 
   it("isolates packaging from the only provenance-enabled publish job", async () => {

@@ -15,7 +15,6 @@
   },
   "files": [
     "dist",
-    "src/catalog-provenance.json",
     "LICENSE",
     "README.md"
   ],
@@ -36,10 +35,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p . --noEmit",
     "parity:runtime": "node scripts/import-runtime-catalog.mjs --check",
-    "parity:runtime:update": "node scripts/import-runtime-catalog.mjs",
-    "catalog:provenance:update": "node scripts/catalog-provenance.mjs --update",
-    "catalog:revision": "node scripts/catalog-provenance.mjs --revision",
-    "parity:canonical": "node scripts/catalog-provenance.mjs --check-source && pnpm parity && pnpm parity:runtime"
+    "parity:runtime:update": "node scripts/import-runtime-catalog.mjs"
   },
   "dependencies": {
     "commander": "^14.0.3",
