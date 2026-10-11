@@ -138,6 +138,38 @@ describe("catalog release provenance", () => {
       "uncommitted",
     );
   });
+  it("rejects dirty provenance through the exact credential-free CI revision command", async () => {
+    const { root, catalogs } = await fixture();
+    const proof = await createProvenance(root, catalogs);
+    const gate = join(root, "gate");
+    await mkdir(join(gate, "scripts"), { recursive: true });
+    await mkdir(join(gate, "src"));
+    for (const name of ["catalog-provenance.mjs", "catalog-source.mjs"])
+      await writeFile(
+        join(gate, "scripts", name),
+        await readFile(new URL(`../scripts/${name}`, import.meta.url)),
+      );
+    for (const name of ["operations.json", "runtime-operations.json"])
+      await writeFile(
+        join(gate, "src", name),
+        await readFile(join(catalogs, name)),
+      );
+    const destination = join(gate, "src/catalog-provenance.json");
+    await writeFile(destination, JSON.stringify(proof));
+    const command = () =>
+      execFileSync(
+        process.execPath,
+        [join(gate, "scripts/catalog-provenance.mjs"), "--revision"],
+        { encoding: "utf8", stdio: "pipe" },
+      );
+    expect(command().trim()).toBe(proof.sourceCommit);
+    await writeFile(
+      destination,
+      JSON.stringify({ ...proof, sourceDirty: true }),
+    );
+    expect(command).toThrow("uncommitted Borealis source");
+  });
+
   it("does not allow relabelling a dirty snapshot as a clean canonical revision", async () => {
     const { root, catalogs } = await fixture();
     await writeFile(
@@ -218,6 +250,7 @@ describe("catalog release provenance", () => {
       "utf8",
     );
     expect(ci).toContain("pnpm catalog:check");
+    expect(ci).toContain("run: node scripts/catalog-provenance.mjs --revision");
     expect(ci).toContain("pnpm test");
     expect(ci).toContain("pnpm pack");
     expect(ci).not.toContain("repository: Amaretto-Software-Labs/borealis");
