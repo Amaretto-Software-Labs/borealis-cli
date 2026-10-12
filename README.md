@@ -142,7 +142,7 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Runtime v2
 
-The CLI includes 85 canonical customer operations plus 35 conditional logical-machine/runtime-template commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
+The CLI includes 86 canonical customer operations plus 63 conditional runtime and networking commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
 
 Standard sandbox start/resume/stop/delete inspect the resource runtime kind and logical binding. Runtime v2 dispatch requires an explicit UUID key and uses the conditional logical-machine endpoint; existing containers retain their lifecycle during migration.
 
@@ -181,7 +181,7 @@ After recovery, renewal and completion bodies must include `expectedActivityLeas
 
 ### Contract parity
 
-`pnpm catalog:check` validates the 86 public and 35 conditional operations for unique commands, API paths and ownership. CI and release packaging run this check, the CLI tests, and the packed-package smoke test without private-source credentials.
+`pnpm catalog:check` validates the 86 public and 63 conditional operations for unique commands, API paths and ownership. CI and release packaging run this check, the CLI tests, and the packed-package smoke test without private-source credentials.
 
 When updating the Borealis contracts, regenerate and compare both catalogs against the source checkout:
 
@@ -211,3 +211,14 @@ A stage result with `readyHosts: 0` means preparation is pending; repeat the sam
 Private OCI builds accept an explicit per-build `registryCredential` through the Borealis API and SDK. The CLI currently accepts build JSON only through command arguments; it has no private body-file or stdin input for these credentials. Use the SDK for private builds, and never place a token in `--body`, `--set`, or an image URL. Public pulls never borrow a saved organization registry credential. Keep request identity stable across transport retries; changing a credential does not replace an already accepted build or its immutable source.
 
 The existing build/get/approve/stage commands retain their operation identities. Wait for signed validation, any required operator approval and exact geometry staging before VM allocation. Acceptance is separate from image readiness and service readiness.
+
+### Computer durability
+
+Computer durability belongs to the VM, independently of task retention. New MicroVMs default to ephemeral (no automatic snapshots). Change an existing computer with a stable request key and inspect protection while the first permanent checkpoint is published:
+
+```bash
+borealis logical-machine durability change "$VM_ID" --idempotency-key "$REQUEST_ID" --body '{"mode":"permanent"}'
+borealis logical-machine durability get "$VM_ID"
+```
+
+Use `{"mode":"ephemeral"}` to stop future automatic checkpoints without replacing the computer. Promotion remains pending until the first fresh durable checkpoint; a permanent computer recovers through its last committed checkpoint.

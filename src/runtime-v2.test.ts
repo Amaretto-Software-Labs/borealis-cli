@@ -26,6 +26,26 @@ const json = (value: unknown, status = 200) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Runtime v2 client contract", () => {
+  it("changes computer durability using the stable operation key", async () => {
+    const change = operations.find(
+      (op) => op.operationId === "logical_machine.durability.change",
+    )!;
+    const read = operations.find(
+      (op) => op.operationId === "logical_machine.durability.get",
+    )!;
+    const request = await prepareRequest(change, [
+      vm,
+      "--idempotency-key",
+      key,
+      "--body",
+      '{"mode":"permanent"}',
+    ]);
+    expect(request.path).toBe(`/api/v1/sandboxes/${vm}/runtime/durability`);
+    expect(request.idempotencyKey).toBe(key);
+    expect(request.body).toEqual({ mode: "permanent" });
+    expect(read.method).toBe("GET");
+    expect(change.scope).toBe("borealis.sandboxes.write");
+  });
   it("cancels the exact queued wake without creating a new request identity", async () => {
     const cancel = operations.find(
       (op) => op.operationId === "logical_machine.wake.cancel",
