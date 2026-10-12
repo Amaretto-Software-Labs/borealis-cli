@@ -15,6 +15,8 @@ for (const [file, root] of [
     "/api/v1/sandboxes/{sandboxId}/runtime",
   ],
   ["BorealisRuntimeTemplateOperationCatalog.cs", "/api/v1/runtime-templates"],
+  ["BorealisPrivateNetworkOperationCatalog.cs", "/api/v1"],
+  ["BorealisManagedServiceOperationCatalog.cs", "/api/v1"],
 ]) {
   const text = await readFile(
     resolve(sourceRoot, "backend/Borealis.Api.Contracts/V1", file),
@@ -38,10 +40,19 @@ for (const [file, root] of [
     });
   }
   for (const match of text.matchAll(
-    /new\("([^"]+)", (?:null|"sandbox.delete"), "([A-Z]+)", ("[^"]+"|Root(?: \+ "[^"]+")?),\s*"([^"]+)",\s*"organization",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)"/g,
+    /new\("([^"]+)", (?:null|"sandbox.delete"), "([A-Z]+)", ("[^"]+"|Root(?: \+ "[^"]+")?),\s*"([^"]+)",\s*"organization",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)"(?:, Risk: "([^"]+)")?/g,
   )) {
-    const [, operationId, method, route, scope, idempotency, , clientMethod] =
-      match;
+    const [
+      ,
+      operationId,
+      method,
+      route,
+      scope,
+      idempotency,
+      ,
+      clientMethod,
+      declaredRisk,
+    ] = match;
     const path = route.startsWith("Root")
       ? root + route.replace(/^Root(?: \+ )?/, "").replaceAll('"', "")
       : route.replaceAll('"', "");
@@ -51,13 +62,14 @@ for (const [file, root] of [
       path,
       scope,
       risk:
-        operationId === "logical_machine.checkpoint.unpin"
+        declaredRisk ??
+        (operationId === "logical_machine.checkpoint.unpin"
           ? "write"
           : method === "DELETE"
             ? "destructive"
             : method === "GET"
               ? "read"
-              : "write",
+              : "write"),
       clientMethod,
       idempotency,
     });
@@ -68,13 +80,19 @@ for (const operation of operations)
     command: operation.operationId
       .replace("logical_machine", "logical-machine")
       .replace("runtime_template", "runtime-template")
+      .replace("vnet_attachment", "vnet attachment")
+      .replace("network_service", "network service")
+      .replace("vm_network_configuration", "vm network")
+      .replace("private_network", "private-network")
+      .replace("managed_service", "managed service")
+      .replace("background_lease", "background lease")
       .replaceAll(".", " "),
     mcpName: operation.operationId.replaceAll(".", "_"),
     ownership: "organization",
     idempotency:
       operation.method === "GET"
         ? "safe"
-        : operation.idempotency === "target-state"
+        : ["target-state", "idempotent"].includes(operation.idempotency)
           ? "target-state"
           : operation.idempotency === "lease-renewal"
             ? "none"
@@ -87,11 +105,11 @@ operations.sort((left, right) =>
   left.operationId.localeCompare(right.operationId, "en"),
 );
 if (
-  operations.length !== 35 ||
-  new Set(operations.map((operation) => operation.operationId)).size !== 35
+  operations.length !== 61 ||
+  new Set(operations.map((operation) => operation.operationId)).size !== 61
 )
   throw new Error(
-    "Expected 35 conditional non-stream Runtime v2 operations; review catalog changes before import.",
+    "Expected 61 conditional non-stream Runtime v2 operations; review catalog changes before import.",
   );
 const sdkDirectory = resolve(sourceRoot, "backend/Borealis.Client");
 const sdkSource = (
@@ -119,6 +137,6 @@ if (process.argv.includes("--check")) {
       "Runtime v2 catalog drift; run pnpm parity:runtime:update.",
     );
   process.stdout.write(
-    "Verified 35 conditional Runtime v2 catalog operations.\n",
+    "Verified 61 conditional Runtime v2 catalog operations.\n",
   );
 } else await writeFile(destination, JSON.stringify(operations, null, 2) + "\n");

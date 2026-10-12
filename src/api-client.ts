@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { operations, runtimeLifecycleMappings } from "./catalog.js";
+import {
+  operations,
+  runtimeLifecycleMappings,
+  conditionalOperationIds,
+} from "./catalog.js";
 import type { Operation } from "./types.js";
 import type { PreparedRequest } from "./invocation.js";
 import { targetFromPath } from "./invocation.js";
@@ -202,7 +206,7 @@ export class BorealisApiClient {
         });
       }
     }
-    if (/^(logical_machine|runtime_template)\./.test(operation.operationId)) {
+    if (conditionalOperationIds.has(operation.operationId)) {
       const discovery = await this.runtimeCapabilities();
       if (
         !discovery.enabled ||
@@ -342,7 +346,7 @@ export class BorealisApiClient {
       headers,
       request.body,
     );
-    if (/^(logical_machine|runtime_template)\./.test(operation.operationId))
+    if (conditionalOperationIds.has(operation.operationId))
       validateRuntimeResult(operation, request, result);
     return result;
   }
@@ -1162,6 +1166,125 @@ function validateRuntimeResult(
     request.path.match(/\/logical-machines\/([^/]+)\/allocations/)?.[1];
   const check = (item: unknown): Record<string, unknown> => {
     const data = record(item);
+    if (operation.operationId.startsWith("managed_service.")) {
+      if (
+        !uuid(data.vmId) ||
+        !sameUuid(data.vmId, machine) ||
+        !uuid(data.requestId) ||
+        !Number.isSafeInteger(data.configurationGeneration) ||
+        Number(data.configurationGeneration) < 1 ||
+        typeof data.state !== "string" ||
+        typeof data.initialized !== "boolean" ||
+        !Number.isSafeInteger(data.committedGeneration) ||
+        Number(data.committedGeneration) < 0 ||
+        typeof data.publicationStatus !== "string" ||
+        typeof data.authorityExpiresAt !== "string" ||
+        !Number.isFinite(Date.parse(data.authorityExpiresAt))
+      )
+        fail();
+      const launch = request.path.match(
+        /\/managed-service\/([^/]+)(?:\/(?:renew|diagnostics))?$/,
+      )?.[1];
+      const expectedLaunch =
+        operation.operationId === "managed_service.launch"
+          ? request.idempotencyKey
+          : operation.operationId === "managed_service.capture"
+            ? record(request.body).launchRequestId
+            : launch;
+      if (!sameUuid(data.requestId, expectedLaunch)) fail();
+      return data;
+    }
+    if (operation.operationId.startsWith("background_lease.")) {
+      if (
+        !uuid(data.vmId) ||
+        !sameUuid(data.vmId, machine) ||
+        !uuid(data.requestId) ||
+        !uuid(data.leaseId) ||
+        !uuid(data.incarnationId) ||
+        !Number.isSafeInteger(data.ownershipEpoch) ||
+        Number(data.ownershipEpoch) < 1 ||
+        typeof data.expiresAt !== "string" ||
+        !Number.isFinite(Date.parse(data.expiresAt)) ||
+        typeof data.state !== "string"
+      )
+        fail();
+      const expectedRequest =
+        operation.operationId === "background_lease.acquire"
+          ? request.idempotencyKey
+          : request.path.match(
+              /\/background-leases\/([^/]+)(?:\/renew)?$/,
+            )?.[1];
+      if (!sameUuid(data.requestId, expectedRequest)) fail();
+      return data;
+    }
+    if (operation.operationId.startsWith("private_network.")) {
+      if (
+        !uuid(data.requestId) ||
+        !uuid(data.resourceId) ||
+        typeof data.kind !== "string" ||
+        typeof data.state !== "string" ||
+        !sameUuid(data.requestId, request.path.split("/").at(-1))
+      )
+        fail();
+      return data;
+    }
+    if (operation.operationId.startsWith("vm_network_configuration.")) {
+      if (
+        !uuid(data.vmId) ||
+        !sameUuid(data.vmId, machine) ||
+        !Number.isSafeInteger(data.generation) ||
+        Number(data.generation) < 1 ||
+        (data.defaultDnsAttachmentId !== null &&
+          !uuid(data.defaultDnsAttachmentId))
+      )
+        fail();
+      return data;
+    }
+    if (
+      /^(vnet|vnet_attachment|network_service)\./.test(operation.operationId)
+    ) {
+      if (
+        !uuid(data.id) ||
+        !Number.isSafeInteger(data.generation) ||
+        Number(data.generation) < 1
+      )
+        fail();
+      const resource = request.path.match(
+        /^\/api\/v1\/(?:vnets|vnet-attachments|network-services)\/([^/]+)$/,
+      )?.[1];
+      if (resource && !sameUuid(data.id, resource)) fail();
+      if (operation.operationId.startsWith("vnet_attachment.")) {
+        if (
+          !uuid(data.vnetId) ||
+          !uuid(data.vmId) ||
+          typeof data.privateAddress !== "string" ||
+          !uuid(data.operationId) ||
+          !["present", "absent"].includes(String(data.desiredMembership)) ||
+          !["attaching", "attached", "detaching", "detached"].includes(
+            String(data.membershipStatus),
+          ) ||
+          !["inactive", "applying", "active", "error"].includes(
+            String(data.connectivity),
+          ) ||
+          (machine && !sameUuid(data.vmId, machine))
+        )
+          fail();
+      } else if (operation.operationId.startsWith("network_service.")) {
+        if (
+          !uuid(data.vnetId) ||
+          !uuid(data.targetAttachmentId) ||
+          typeof data.label !== "string" ||
+          typeof data.qualifiedHost !== "string"
+        )
+          fail();
+      } else if (
+        typeof data.name !== "string" ||
+        typeof data.routingDomain !== "string" ||
+        typeof data.state !== "string"
+      )
+        fail();
+      return data;
+    }
     if (
       operation.operationId.startsWith("runtime_template.") &&
       operation.operationId !== "runtime_template.activate"
@@ -1256,7 +1379,12 @@ function validateRuntimeResult(
       fail();
     return data;
   };
-  if (operation.operationId === "runtime_template.list") {
+  if (
+    operation.operationId === "runtime_template.list" ||
+    /^(vnet|vnet_attachment|network_service)\..*list$/.test(
+      operation.operationId,
+    )
+  ) {
     if (!Array.isArray(value)) fail();
     for (const item of value as unknown[]) check(item);
   } else check(value);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Readable } from "node:stream";
-import { operations } from "./catalog.js";
+import { operations, conditionalOperationIds } from "./catalog.js";
 import {
   prepareRequest,
   readBoundedSecretStdin,
@@ -25,7 +25,7 @@ describe("request preparation", () => {
           ? ["--disable"]
           : identifiers;
       if (
-        /^(logical_machine|runtime_template)\./.test(candidate.operationId) &&
+        conditionalOperationIds.has(candidate.operationId) &&
         candidate.idempotency === "idempotency-key"
       )
         args.push("--idempotency-key", "e8a5c14c-57d4-4bf0-8307-aea8bd50272c");
@@ -34,6 +34,14 @@ describe("request preparation", () => {
           "--body",
           '{"captureBoundaryId":"e8a5c14c-57d4-4bf0-8307-aea8bd50272c","outputWatermark":0}',
         );
+      if (
+        candidate.method === "DELETE" &&
+        /^(vnet|vnet_attachment|network_service)\./.test(candidate.operationId)
+      )
+        args.push("--expected-generation", "1");
+      if (candidate.operationId === "managed_service.stop") {
+        args[1] = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
+      }
       const request = await prepareRequest(candidate, args);
       expect(request.path).toMatch(/^\/api\/v1\//);
       expect(request.path).not.toContain("{");
