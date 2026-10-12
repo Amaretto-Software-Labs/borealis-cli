@@ -440,7 +440,7 @@ async function runInternal(
   }
   writeResult(result, options.json);
   if (
-    (/^(logical_machine|runtime_template)\./.test(
+    (/^(logical_machine|runtime_template|managed_service|private_network)\./.test(
       resolved.operation.operationId,
     ) ||
       Boolean(runtimeLifecycleMappings[resolved.operation.operationId])) &&
