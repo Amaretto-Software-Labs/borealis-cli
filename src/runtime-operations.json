@@ -210,6 +210,36 @@
     "requiresPreflight": false
   },
   {
+    "operationId": "logical_machine.durability.change",
+    "method": "POST",
+    "path": "/api/v1/sandboxes/{sandboxId}/runtime/durability",
+    "scope": "borealis.sandboxes.write",
+    "risk": "write",
+    "clientMethod": "ChangeLogicalMachineDurabilityAsync",
+    "command": "logical-machine durability change",
+    "mcpName": "logical_machine_durability_change",
+    "ownership": "organization",
+    "idempotency": "idempotency-key",
+    "retry": "never-after-dispatch",
+    "paging": "none",
+    "requiresPreflight": false
+  },
+  {
+    "operationId": "logical_machine.durability.get",
+    "method": "GET",
+    "path": "/api/v1/sandboxes/{sandboxId}/runtime/durability",
+    "scope": "borealis.sandboxes.read",
+    "risk": "read",
+    "clientMethod": "GetLogicalMachineDurabilityAsync",
+    "command": "logical-machine durability get",
+    "mcpName": "logical_machine_durability_get",
+    "ownership": "organization",
+    "idempotency": "safe",
+    "retry": "safe",
+    "paging": "none",
+    "requiresPreflight": false
+  },
+  {
     "operationId": "logical_machine.get",
     "method": "GET",
     "path": "/api/v1/sandboxes/{sandboxId}/runtime",

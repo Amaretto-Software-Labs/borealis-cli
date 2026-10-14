@@ -105,11 +105,11 @@ operations.sort((left, right) =>
   left.operationId.localeCompare(right.operationId, "en"),
 );
 if (
-  operations.length !== 61 ||
-  new Set(operations.map((operation) => operation.operationId)).size !== 61
+  operations.length !== 63 ||
+  new Set(operations.map((operation) => operation.operationId)).size !== 63
 )
   throw new Error(
-    "Expected 61 conditional non-stream Runtime v2 operations; review catalog changes before import.",
+    "Expected 63 conditional non-stream Runtime v2 operations; review catalog changes before import.",
   );
 const sdkDirectory = resolve(sourceRoot, "backend/Borealis.Client");
 const sdkSource = (
@@ -137,6 +137,6 @@ if (process.argv.includes("--check")) {
       "Runtime v2 catalog drift; run pnpm parity:runtime:update.",
     );
   process.stdout.write(
-    "Verified 61 conditional Runtime v2 catalog operations.\n",
+    "Verified 63 conditional Runtime v2 catalog operations.\n",
   );
 } else await writeFile(destination, JSON.stringify(operations, null, 2) + "\n");
