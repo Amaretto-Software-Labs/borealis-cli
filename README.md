@@ -183,3 +183,11 @@ borealis runtime-image template stage custom-image 1 --body '{"placement":{"host
 ```
 
 A stage result with `readyHosts: 0` means preparation is pending; repeat the same stage request to observe progress. A ready host has prepared this exact template baseline. Images are staged on demand, not replicated to every host. Different VM sizes need separate preparation. A complete paused VM pool is additional, demand-driven capacity; image readiness alone does not promise a pool hit.
+
+### Managed sidecar image preparation
+
+`runtime-image build` accepts the published build request with `enableManagedService: true` for a service image whose original ENTRYPOINT/CMD runs only after authorized launch. `sourceKind: "container_archive"` uses the existing build-context upload's digest reference for a Docker-save or OCI archive. Raw VM disks are not container archives.
+
+Private OCI pulls use an explicit per-build `registryCredential` object (`registryHost`, `username`, `secret`) submitted through the existing private request-body input. The server protects this credential while work is pending and revokes the isolated builder lease. Public pulls never borrow a saved organization registry credential. Never place a token in a command argument or image URL. Keep request identity stable across transport retries; changing a credential does not replace an already accepted build or its immutable source.
+
+The existing build/get/approve/stage commands retain their operation identities. Wait for signed validation, any required operator approval and exact geometry staging before VM allocation. Acceptance is separate from image readiness and service readiness.
