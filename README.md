@@ -61,8 +61,8 @@ borealis host list --pool 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 borealis interactive attach 018f4c28-dc05-7e91-9f8e-11e421bb8a91
 ```
 
-Container remains the compatibility default. Select an immutable ARM64 MicroVM
-template explicitly when stronger isolation is required:
+Sandbox creation follows the API's MicroVM default. To select a prepared ARM64
+image explicitly, use its immutable template revision:
 
 ```bash
 borealis sandbox create \

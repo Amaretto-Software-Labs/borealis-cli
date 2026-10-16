@@ -305,6 +305,41 @@ describe("request preparation", () => {
     expect(workspace.body).toMatchObject({ clearWorkspace: false });
   });
 
+  it("leaves the runtime default to the API when none is selected", async () => {
+    const create = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "default-runtime",
+    ]);
+
+    expect(create.body).toEqual({ name: "default-runtime" });
+  });
+
+  it.each([
+    { extra: ["--image", "node:22"], message: "--image cannot be combined" },
+    { extra: ["--cpu", "2"], message: "Use --vcpu and --memory-mib" },
+    { extra: ["--memory", "4"], message: "Use --vcpu and --memory-mib" },
+    { extra: ["--architecture", "arm64"], message: "--architecture must be" },
+  ])(
+    "rejects incompatible MicroVM options $extra",
+    async ({ extra, message }) => {
+      await expect(
+        prepareRequest(operation("sandbox.create"), [
+          "--name",
+          "isolated",
+          "--runtime",
+          "microvm",
+          "--runtime-template",
+          "ubuntu-24.04",
+          "--template-revision",
+          "3",
+          "--architecture",
+          "aarch64",
+          ...extra,
+        ]),
+      ).rejects.toThrow(message);
+    },
+  );
+
   it("maps an ARM64 MicroVM create request without a Docker image", async () => {
     const create = await prepareRequest(operation("sandbox.create"), [
       "--name",
