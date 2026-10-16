@@ -529,3 +529,129 @@ describe("Runtime v2 cancellation output", () => {
     ).toEqual(receipt);
   });
 });
+
+describe("managed service and private network terminal output", () => {
+  it.each([
+    { state: "failed", exitCode: 3 },
+    { state: "outcomeUnknown", exitCode: 4 },
+    { state: "cancelled", exitCode: 130 },
+    { state: "ready", exitCode: 0 },
+  ])(
+    "preserves managed service $state JSON and exits $exitCode",
+    async ({ state, exitCode }) => {
+      process.env.BOREALIS_ACCESS_TOKEN = "token";
+      const vmId = "a535812b-3c64-4888-824c-928530ad9e21";
+      const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
+      const observation = {
+        vmId,
+        requestId,
+        configurationGeneration: 7,
+        state,
+        initialized: false,
+        committedGeneration: 0,
+        publicationStatus: "pending",
+        authorityExpiresAt: new Date().toISOString(),
+        failureCode: state === "failed" ? "probe_failed" : null,
+      };
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              enabled: true,
+              operations: ["managed_service.get"],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(observation), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      vi.stubGlobal("fetch", fetcher);
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      expect(
+        await run([
+          "--api=https://api.example",
+          "--json",
+          "managed",
+          "service",
+          "get",
+          vmId,
+          requestId,
+        ]),
+      ).toBe(exitCode);
+      expect(stdout).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toEqual(observation);
+      expect(stderr).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: "GET" });
+    },
+  );
+
+  it.each([
+    { state: "failed", exitCode: 3 },
+    { state: "outcomeUnknown", exitCode: 4 },
+    { state: "cancelled", exitCode: 130 },
+    { state: "completed", exitCode: 0 },
+  ])(
+    "preserves private network $state JSON and exits $exitCode",
+    async ({ state, exitCode }) => {
+      process.env.BOREALIS_ACCESS_TOKEN = "token";
+      const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
+      const resourceId = "d9ca33cb-ec1e-43d6-97e3-3d56de7f1a74";
+      const observation = {
+        requestId,
+        resourceId,
+        kind: "vnet.create",
+        state,
+        generation: 7,
+        failureCode: state === "failed" ? "publication_failed" : null,
+      };
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              enabled: true,
+              operations: ["private_network.operation.get"],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(observation), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      vi.stubGlobal("fetch", fetcher);
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      expect(
+        await run([
+          "--api=https://api.example",
+          "--json",
+          "private-network",
+          "operation",
+          "get",
+          requestId,
+        ]),
+      ).toBe(exitCode);
+      expect(stdout).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toEqual(observation);
+      expect(stderr).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: "GET" });
+    },
+  );
+});

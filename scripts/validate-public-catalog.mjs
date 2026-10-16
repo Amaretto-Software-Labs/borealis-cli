@@ -36,19 +36,21 @@ const runtime = JSON.parse(
 );
 const all = [...operations, ...runtime];
 if (
-  runtime.length !== 35 ||
-  new Set(all.map((item) => item.operationId)).size !== 121 ||
-  new Set(all.map((item) => item.command)).size !== 121 ||
+  runtime.length !== 63 ||
+  new Set(all.map((item) => item.operationId)).size !== 149 ||
+  new Set(all.map((item) => item.command)).size !== 149 ||
   runtime.some(
     (item) =>
-      !/^(logical_machine|runtime_template)\./.test(item.operationId) ||
+      !/^(logical_machine|runtime_template|vnet|vnet_attachment|network_service|vm_network_configuration|private_network|managed_service|background_lease)\./.test(
+        item.operationId,
+      ) ||
       !item.path.startsWith("/api/v1/") ||
       item.ownership !== "organization",
   )
 )
   throw new Error(
-    "The committed conditional catalog must contain exactly 35 unique organization-scoped Runtime v2 operations without colliding with public commands.",
+    "The committed conditional catalog must contain exactly 63 unique organization-scoped Runtime v2 operations without colliding with public commands.",
   );
 process.stdout.write(
-  "Verified 35 conditional operations and 121 unique public commands.\n",
+  "Verified 63 conditional operations and 149 unique public commands.\n",
 );

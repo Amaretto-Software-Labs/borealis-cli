@@ -2,6 +2,10 @@ import runtimeOperationData from "./runtime-operations.json" with { type: "json"
 import operationData from "./operations.json" with { type: "json" };
 import { operationSchema, type Operation } from "./types.js";
 
+export const conditionalOperationIds: ReadonlySet<string> = new Set(
+  runtimeOperationData.map((operation) => operation.operationId),
+);
+
 export const operations: readonly Operation[] = Object.freeze(
   [...operationData, ...runtimeOperationData].map((operation) =>
     operationSchema.parse(operation),

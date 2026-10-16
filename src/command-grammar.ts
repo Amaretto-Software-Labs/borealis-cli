@@ -16,6 +16,7 @@ const valueOptions = [
   "data",
   "display-name",
   "entitlement",
+  "expected-generation",
   "env",
   "external-id",
   "host",
@@ -90,6 +91,9 @@ type BooleanOption = (typeof booleanOptions)[number];
 const operationOptions: Readonly<
   Record<string, readonly (ValueOption | BooleanOption)[]>
 > = {
+  "vnet.delete": ["expected-generation"],
+  "vnet_attachment.delete": ["expected-generation"],
+  "network_service.delete": ["expected-generation"],
   "logical_machine.allocate": [
     "name",
     "image",

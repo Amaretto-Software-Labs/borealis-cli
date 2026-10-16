@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
-import { runtimeLifecycleMappings } from "./catalog.js";
+import {
+  runtimeLifecycleMappings,
+  conditionalOperationIds,
+} from "./catalog.js";
 import type { Operation } from "./types.js";
 import { readOwnerOnlySecretFile } from "./secret-file.js";
 
@@ -20,6 +23,7 @@ const valueOptions = new Set([
   "--data",
   "--display-name",
   "--entitlement",
+  "--expected-generation",
   "--env",
   "--external-id",
   "--host",
@@ -99,6 +103,7 @@ const repeated = new Set([
   "scope",
 ]);
 const numericOptions = new Set([
+  "expectedGeneration",
   "cols",
   "containerPort",
   "cpu",
@@ -497,7 +502,27 @@ export async function prepareRequest(
       );
   }
 
+  if (
+    operation.operationId === "managed_service.stop" &&
+    values.idempotencyKey !== targets.launchRequestId
+  )
+    throw new Error(
+      "Managed service stop requires the original launchRequestId as --idempotency-key.",
+    );
   const query = new URLSearchParams();
+  if (
+    operation.method === "DELETE" &&
+    /^(vnet|vnet_attachment|network_service)\./.test(operation.operationId)
+  ) {
+    const expected = values.expectedGeneration ?? body?.expectedGeneration;
+    if (!Number.isSafeInteger(expected) || Number(expected) < 1)
+      throw new Error(
+        "Private network deletion requires an exact positive --expected-generation.",
+      );
+    query.set("expectedGeneration", String(expected));
+    delete values.expectedGeneration;
+    if (body) delete body.expectedGeneration;
+  }
   if (operation.method === "GET") {
     for (const [key, value] of Object.entries(values)) {
       for (const item of Array.isArray(value) ? value : [value])
@@ -516,9 +541,7 @@ export async function prepareRequest(
   if (body) delete body.idempotencyKey;
   if (operation.operationId === "snapshot.create" && body)
     delete body.requestId;
-  const runtimeOperation = /^(logical_machine|runtime_template)\./.test(
-    operation.operationId,
-  );
+  const runtimeOperation = conditionalOperationIds.has(operation.operationId);
   if (
     runtimeOperation &&
     operation.idempotency === "idempotency-key" &&
