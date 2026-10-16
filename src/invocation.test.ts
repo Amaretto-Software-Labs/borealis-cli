@@ -304,4 +304,107 @@ describe("request preparation", () => {
     );
     expect(workspace.body).toMatchObject({ clearWorkspace: false });
   });
+
+  it("leaves the runtime default to the API when none is selected", async () => {
+    const create = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "default-runtime",
+    ]);
+
+    expect(create.body).toEqual({ name: "default-runtime" });
+  });
+
+  it.each([
+    { extra: ["--image", "node:22"], message: "--image cannot be combined" },
+    { extra: ["--cpu", "2"], message: "Use --vcpu and --memory-mib" },
+    { extra: ["--memory", "4"], message: "Use --vcpu and --memory-mib" },
+    { extra: ["--architecture", "arm64"], message: "--architecture must be" },
+  ])(
+    "rejects incompatible MicroVM options $extra",
+    async ({ extra, message }) => {
+      await expect(
+        prepareRequest(operation("sandbox.create"), [
+          "--name",
+          "isolated",
+          "--runtime",
+          "microvm",
+          "--runtime-template",
+          "ubuntu-24.04",
+          "--template-revision",
+          "3",
+          "--architecture",
+          "aarch64",
+          ...extra,
+        ]),
+      ).rejects.toThrow(message);
+    },
+  );
+
+  it("maps an ARM64 MicroVM create request without a Docker image", async () => {
+    const create = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "isolated",
+      "--runtime",
+      "microvm",
+      "--runtime-template",
+      "ubuntu-24.04",
+      "--template-revision",
+      "3",
+      "--architecture",
+      "aarch64",
+      "--vcpu",
+      "2",
+      "--memory-mib",
+      "4096",
+      "--root-disk",
+      "20",
+    ]);
+
+    expect(create.body).toMatchObject({
+      name: "isolated",
+      runtime: {
+        kind: "microvm",
+        templateId: "ubuntu-24.04",
+        templateRevision: 3,
+        architecture: "aarch64",
+        resources: { vcpu: 2, memoryMiB: 4096, rootDiskGiB: 20 },
+      },
+    });
+    expect(create.body).not.toHaveProperty("image");
+  });
+
+  it("preserves structured runtime contracts supplied through --set", async () => {
+    const containerRuntime = { kind: "container" };
+    const container = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "container",
+      "--image",
+      "node:22",
+      "--set",
+      `runtime=${JSON.stringify(containerRuntime)}`,
+    ]);
+    expect(container.body).toEqual({
+      name: "container",
+      image: "node:22",
+      runtime: containerRuntime,
+    });
+
+    const microVmRuntime = {
+      kind: "microvm",
+      templateId: "ubuntu-24.04",
+      templateRevision: 3,
+      architecture: "aarch64",
+      resources: { vcpu: 2, memoryMiB: 4096, rootDiskGiB: 20 },
+    };
+    const microVm = await prepareRequest(operation("sandbox.create"), [
+      "--name",
+      "isolated",
+      "--set",
+      `runtime=${JSON.stringify(microVmRuntime)}`,
+    ]);
+    expect(microVm.body).toEqual({
+      name: "isolated",
+      runtime: microVmRuntime,
+    });
+  });
 });

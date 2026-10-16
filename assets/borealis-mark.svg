@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none" role="img" aria-label="Borealis">
+  <title>Borealis</title>
+  <defs>
+    <linearGradient id="brls-ribbon" x1="24" y1="6" x2="24" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f2fbff"/>
+      <stop offset=".55" stop-color="#a3e8ff"/>
+      <stop offset="1" stop-color="#6bf8d7"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 7.5H13A5.5 5.5 0 0 0 7.5 13v22A5.5 5.5 0 0 0 13 40.5h3" stroke="#38f5c8"/>
+    <path d="M32 7.5H35A5.5 5.5 0 0 1 40.5 13v22A5.5 5.5 0 0 1 35 40.5h-3" stroke="#1aa2c4"/>
+    <path d="M26 10.5C25 19 23 29 22 37.5" stroke="url(#brls-ribbon)" stroke-width="6.4"/>
+  </g>
+</svg>
