@@ -655,3 +655,104 @@ describe("managed service and private network terminal output", () => {
     },
   );
 });
+
+describe("allocation cancellation recovery", () => {
+  const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
+  const args = [
+    "--api=https://api.example",
+    "--json",
+    "logical-machine",
+    "allocation",
+    "cancel",
+    requestId,
+    "--yes",
+  ];
+  function setup() {
+    process.env.BOREALIS_ACCESS_TOKEN = "token";
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          enabled: true,
+          operations: ["logical_machine.allocation.cancel"],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const output = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return { fetcher, output };
+  }
+  it.each(["transport", "response-body", "server"])(
+    "preserves the original request after a %s failure without retrying DELETE",
+    async (failure) => {
+      const { fetcher, output } = setup();
+      fetcher.mockResolvedValueOnce(
+        new Response(JSON.stringify({ preflightToken: "proof" }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      if (failure === "transport")
+        fetcher.mockRejectedValueOnce(new TypeError("connection lost"));
+      else if (failure === "server")
+        fetcher.mockResolvedValueOnce(
+          new Response("unavailable", { status: 503 }),
+        );
+      else
+        fetcher.mockResolvedValueOnce(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new TypeError("response lost"));
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      expect(await run(args)).toBe(4);
+      const receipt = JSON.parse(
+        output.mock.calls.map((call) => call[0]).join(""),
+      );
+      expect(receipt).toMatchObject({ error: "ambiguous_outcome", requestId });
+      expect(receipt).not.toHaveProperty("idempotencyKey");
+      expect(receipt.message).toContain(
+        `logical-machine allocation by-request ${requestId}`,
+      );
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      const mutations = fetcher.mock.calls.filter(
+        (call) => call[1]?.method === "DELETE",
+      );
+      expect(mutations).toHaveLength(1);
+      expect(String(mutations[0]![0])).toBe(
+        `https://api.example/api/v1/logical-machines/allocations/${requestId}`,
+      );
+      expect(mutations[0]![1].headers).toMatchObject({
+        "x-borealis-preflight": "proof",
+      });
+    },
+  );
+  it("does not claim ambiguous cancellation if preflight fails before dispatch", async () => {
+    const { fetcher, output } = setup();
+    fetcher.mockRejectedValueOnce(new TypeError("preflight unavailable"));
+    expect(await run(args)).toBe(1);
+    expect(output).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(
+      fetcher.mock.calls.some((call) => call[1]?.method === "DELETE"),
+    ).toBe(false);
+  });
+  it("preserves a definitive cancellation refusal", async () => {
+    const { fetcher, output } = setup();
+    fetcher.mockResolvedValueOnce(
+      new Response(JSON.stringify({ preflightToken: "proof" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    fetcher.mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
+    expect(await run(args)).toBe(2);
+    expect(output).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+});

@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { createRequire } from "node:module";
 import {
+  AmbiguousAllocationCancellationError,
   AmbiguousDispatchError,
   ApiError,
   BorealisApiClient,
@@ -481,12 +482,17 @@ export async function run(
     validateCommandGrammar(argv);
     return await runInternal(argv, signal);
   } catch (error) {
-    if (error instanceof AmbiguousDispatchError) {
+    if (
+      error instanceof AmbiguousDispatchError ||
+      error instanceof AmbiguousAllocationCancellationError
+    ) {
       if (argv.includes("--json"))
         writeResult(
           {
             error: "ambiguous_outcome",
-            idempotencyKey: error.idempotencyKey,
+            ...(error instanceof AmbiguousAllocationCancellationError
+              ? { requestId: error.requestId }
+              : { idempotencyKey: error.idempotencyKey }),
             message: error.message,
           },
           true,
