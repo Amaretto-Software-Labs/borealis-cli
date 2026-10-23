@@ -142,7 +142,7 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Runtime v2
 
-The CLI includes 86 canonical customer operations plus 63 conditional runtime and networking commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
+The CLI includes 86 canonical customer operations plus 65 conditional runtime and networking commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
 
 Standard sandbox start/resume/stop/delete inspect the resource runtime kind and logical binding. Runtime v2 dispatch requires an explicit UUID key and uses the conditional logical-machine endpoint; existing containers retain their lifecycle during migration.
 
@@ -165,6 +165,15 @@ borealis runtime-template retire "$TEMPLATE_ID" "$REVISION"
 Allocation, wake, start and template activation support bounded `--wait`; a committed wake establishes execution readiness. Only successful independently verified checkpoint commit establishes durable turn output. Suspended processes preserve local state but make no progress, and external connections may need reconnecting.
 
 Use `--json` for structured results. Exit codes are 0 for accepted/successful calls, 1 for input/local failures, 2 for authorization failures, 3 for API/terminal operation failures, 4 for ambiguous dispatch or `OutcomeUnknown`, and 130 for cancellation. Ambiguous JSON includes `idempotencyKey`; the CLI never silently resubmits. Recover a lost allocation response by its original request key, or query wake/operation/turn/checkpoint status with original identifiers. A successful acceptance without `--wait` does not claim final readiness. Deletion retains explicit confirmation and API-owned `sandbox.delete` preflight.
+
+An idle, paused VM can release its resident RAM while keeping its local checkpoint:
+
+```sh
+borealis logical-machine hibernate "$VM_ID" --idempotency-key "$HIBERNATE_REQUEST_ID"
+borealis logical-machine operation get "$VM_ID" "$HIBERNATE_REQUEST_ID"
+```
+
+The accepted response is pending work, not proof of hibernation. Wait for the operation to commit and the VM to reach `LocalDiskSuspended`; resume through the normal wake command. Reuse the same request ID after a timeout. Replaying a completed request after resume returns its original receipt without hibernating again. Active work must finish and the VM must be paused first. Local checkpoints depend on the original host and disk; they are not durable backups.
 
 `BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity` verifies the canonical customer catalog, and `pnpm parity:runtime` separately checks conditional catalog parity. Neither command builds another CLI in the backend repository.
 

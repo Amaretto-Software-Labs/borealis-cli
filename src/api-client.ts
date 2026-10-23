@@ -1327,9 +1327,17 @@ function validateRuntimeResult(
         "logical_machine.allocate",
         "logical_machine.wake",
         "logical_machine.start",
+        "logical_machine.hibernate",
         "runtime_template.activate",
       ].includes(operation.operationId) &&
       !sameUuid(data.requestId, request.idempotencyKey)
+    )
+      fail();
+    if (
+      operation.operationId === "logical_machine.hibernate" &&
+      (!uuid(data.operationId) ||
+        data.kind !== "local_disk_eviction" ||
+        !["InProgress", "Committed", "Failed"].includes(String(data.state)))
     )
       fail();
     if (

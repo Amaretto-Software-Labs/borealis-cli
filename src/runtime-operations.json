@@ -90,6 +90,21 @@
     "requiresPreflight": false
   },
   {
+    "operationId": "logical_machine.allocation.cancel",
+    "method": "DELETE",
+    "path": "/api/v1/logical-machines/allocations/{requestId}",
+    "scope": "borealis.sandboxes.write",
+    "risk": "destructive",
+    "clientMethod": "CancelLogicalMachineAllocationAsync",
+    "idempotency": "target-state",
+    "command": "logical-machine allocation cancel",
+    "mcpName": "logical_machine_allocation_cancel",
+    "ownership": "organization",
+    "retry": "never-after-dispatch",
+    "paging": "none",
+    "requiresPreflight": true
+  },
+  {
     "operationId": "logical_machine.allocation.get",
     "method": "GET",
     "path": "/api/v1/logical-machines/{sandboxId}/allocations/{requestId}",
@@ -251,6 +266,21 @@
     "ownership": "organization",
     "idempotency": "safe",
     "retry": "safe",
+    "paging": "none",
+    "requiresPreflight": false
+  },
+  {
+    "operationId": "logical_machine.hibernate",
+    "method": "POST",
+    "path": "/api/v1/sandboxes/{sandboxId}/runtime/hibernate",
+    "scope": "borealis.sandboxes.write",
+    "risk": "write",
+    "clientMethod": "HibernateLogicalMachineAsync",
+    "command": "logical-machine hibernate",
+    "mcpName": "logical_machine_hibernate",
+    "ownership": "organization",
+    "idempotency": "idempotency-key",
+    "retry": "never-after-dispatch",
     "paging": "none",
     "requiresPreflight": false
   },
