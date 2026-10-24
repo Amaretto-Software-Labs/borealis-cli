@@ -54,6 +54,18 @@ export class AmbiguousDispatchError extends Error {
   }
 }
 
+export class AmbiguousAllocationCancellationError extends Error {
+  constructor(
+    readonly requestId: string,
+    options: ErrorOptions,
+  ) {
+    super(
+      `Allocation cancellation may have been accepted, but its result is unknown. Reconcile with logical-machine allocation by-request ${requestId} before taking further action.`,
+      options,
+    );
+  }
+}
+
 export interface ClientOptions {
   api: string;
   token: string;
@@ -340,12 +352,22 @@ export class BorealisApiClient {
       headers["x-borealis-preflight"] = preflight.preflightToken;
     }
     const path = `${request.path}${request.query.size ? `?${request.query}` : ""}`;
-    const result = await this.send(
-      operation.method,
-      path,
-      headers,
-      request.body,
-    );
+    let result: unknown;
+    try {
+      result = await this.send(operation.method, path, headers, request.body);
+    } catch (error) {
+      // Preflight has succeeded; only the dispatched DELETE can have an
+      // uncertain outcome. Its recovery identity is the original allocation.
+      if (
+        operation.operationId === "logical_machine.allocation.cancel" &&
+        isAmbiguousDispatchFailure(error)
+      )
+        throw new AmbiguousAllocationCancellationError(
+          decodeURIComponent(request.path.split("/").at(-1)!),
+          { cause: error },
+        );
+      throw error;
+    }
     if (conditionalOperationIds.has(operation.operationId))
       validateRuntimeResult(operation, request, result);
     return result;
@@ -1327,9 +1349,17 @@ function validateRuntimeResult(
         "logical_machine.allocate",
         "logical_machine.wake",
         "logical_machine.start",
+        "logical_machine.hibernate",
         "runtime_template.activate",
       ].includes(operation.operationId) &&
       !sameUuid(data.requestId, request.idempotencyKey)
+    )
+      fail();
+    if (
+      operation.operationId === "logical_machine.hibernate" &&
+      (!uuid(data.operationId) ||
+        data.kind !== "local_disk_eviction" ||
+        !["InProgress", "Committed", "Failed"].includes(String(data.state)))
     )
       fail();
     if (

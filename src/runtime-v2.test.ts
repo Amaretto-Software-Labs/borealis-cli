@@ -26,6 +26,46 @@ const json = (value: unknown, status = 200) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Runtime v2 client contract", () => {
+  it("hibernates using the caller's stable key and preserves a pending operation receipt", async () => {
+    const operation = operations.find(
+      (op) => op.operationId === "logical_machine.hibernate",
+    )!;
+    expect(operation.command).toBe("logical-machine hibernate");
+    expect(operation.scope).toBe("borealis.sandboxes.write");
+    await expect(prepareRequest(operation, [vm])).rejects.toThrow(
+      "explicit UUID",
+    );
+    const request = await prepareRequest(operation, [
+      vm,
+      "--idempotency-key",
+      key,
+    ]);
+    expect(request.path).toBe(`/api/v1/sandboxes/${vm}/runtime/hibernate`);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ enabled: true, operations: [operation.operationId] }),
+      )
+      .mockResolvedValueOnce(
+        json(
+          {
+            requestId: key,
+            operationId: key,
+            sandboxId: vm,
+            kind: "local_disk_eviction",
+            state: "InProgress",
+          },
+          202,
+        ),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    await expect(client().invoke(operation, request)).resolves.toMatchObject({
+      requestId: key,
+      state: "InProgress",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("changes computer durability using the stable operation key", async () => {
     const change = operations.find(
       (op) => op.operationId === "logical_machine.durability.change",
