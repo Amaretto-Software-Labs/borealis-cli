@@ -110,32 +110,97 @@ const transportSection = text.match(
 const transportOperations = transportSection
   ? [
       ...transportSection.matchAll(
-        /new\("([^"]+)",[^\n]+?"([A-Za-z0-9]+Async)"/g,
+        /new\("([^"]+)",\s*(?:"[^"]*"|null),\s*"([A-Z]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([A-Za-z0-9]+Async)"([^\n]*)/g,
       ),
-    ].map((match) => ({ operationId: match[1], method: match[2] }))
+    ].map((match) => ({
+      operationId: match[1],
+      httpMethod: match[2],
+      path: match[3],
+      scope: match[4],
+      ownership: match[5],
+      idempotency: match[6],
+      retry: match[7],
+      method: match[8],
+      trailing: match[9],
+    }))
   : [];
-const transportMethods = transportOperations.map(({ method }) => method);
 if (
-  transportMethods.length !== 19 ||
-  transportMethods.some((method) => !client.includes(`${method}(`))
+  !transportSection ||
+  transportOperations.length !==
+    (transportSection.match(/\bnew\(/g) ?? []).length ||
+  new Set(transportOperations.map(({ operationId }) => operationId)).size !==
+    transportOperations.length ||
+  transportOperations.some(({ method }) => !client.includes(`${method}(`))
 ) {
   throw new Error(
-    `Expected all 19 transport operations to map to Borealis.Client; found ${transportMethods.length}.`,
+    "Every unique transport operation must parse and map to Borealis.Client.",
+  );
+}
+// Administrative diagnostics remain API/SDK-only. Do not advertise an admin CLI
+// command or accept a write/credential transport under a prefix-only exemption.
+const administrativeTransports = transportOperations.filter(({ operationId }) =>
+  operationId.startsWith("admin."),
+);
+for (const operation of administrativeTransports) {
+  if (
+    operation.operationId !== "admin.host.resource_commitments.get" ||
+    operation.httpMethod !== "GET" ||
+    operation.path !== "/api/v1/admin/hosts/{hostId}/resource-commitments" ||
+    operation.scope !== "borealis.admin.read" ||
+    operation.ownership !== "platform" ||
+    operation.idempotency !== "safe" ||
+    operation.retry !== "safe" ||
+    operation.method !== "AdminGetHostResourceCommitmentsAsync" ||
+    !/^\s*,\s*Risk:\s*"read"\s*\),?\s*$/.test(operation.trailing)
+  ) {
+    throw new Error(
+      "Unrecognized or changed API/SDK-only administrative transport.",
+    );
+  }
+}
+const sdkOnlyTransportIds = new Set([
+  "sandbox.workspace.import.legacy",
+  "billing.changes.stream",
+  "runtime_v2.capabilities",
+  "runtime_image_context.upload",
+  "runtime_image_template.artifact",
+  "runtime_image_template.artifact.head",
+]);
+const implementedSection = typescriptClient.match(
+  /implementedTransportOperationIds = Object\.freeze\(\[(.*?)\] as const\)/s,
+)?.[1];
+if (!implementedSection)
+  throw new Error("Cannot resolve implemented TypeScript transport registry.");
+const implementedIds = [...implementedSection.matchAll(/"([^"]+)"/g)].map(
+  (match) => match[1],
+);
+const expectedIds = new Set([
+  ...implementedIds,
+  ...sdkOnlyTransportIds,
+  ...administrativeTransports.map(({ operationId }) => operationId),
+]);
+const actualIds = new Set(
+  transportOperations.map(({ operationId }) => operationId),
+);
+if (
+  new Set(implementedIds).size !== implementedIds.length ||
+  expectedIds.size !== actualIds.size ||
+  [...expectedIds].some((id) => !actualIds.has(id)) ||
+  implementedIds.some(
+    (id) => sdkOnlyTransportIds.has(id) || id.startsWith("admin."),
+  )
+) {
+  throw new Error(
+    "Transport catalog and explicit TypeScript/API-only registries differ.",
   );
 }
 const firstPartyTransportOperations = transportOperations.filter(
   ({ operationId }) =>
-    operationId !== "sandbox.workspace.import.legacy" &&
-    !operationId.startsWith("runtime_image_") &&
-    operationId !== "billing.changes.stream" &&
-    operationId !== "runtime_v2.capabilities",
+    !sdkOnlyTransportIds.has(operationId) && !operationId.startsWith("admin."),
 );
 if (
-  firstPartyTransportOperations.length !== 13 ||
   firstPartyTransportOperations.some(
-    ({ operationId }) =>
-      !typescriptClient.includes(`"${operationId}"`) ||
-      !typescriptClientTests.includes(`"${operationId}"`),
+    ({ operationId }) => !typescriptClientTests.includes(`"${operationId}"`),
   )
 ) {
   throw new Error(
@@ -174,7 +239,7 @@ if (process.argv.includes("--check")) {
     );
   }
   process.stdout.write(
-    `Verified ${operations.length} public operations and ${transportMethods.length} bounded transport operations against the .NET catalog and client${registry ? ", including the legacy CLI registry" : ""}.\n`,
+    `Verified ${operations.length} public operations and ${transportOperations.length} bounded transport operations against the .NET catalog and client${registry ? ", including the legacy CLI registry" : ""}.\n`,
   );
 } else {
   await writeFile(destination, serialized, "utf8");
