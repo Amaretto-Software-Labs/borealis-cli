@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isGuid, sameGuid } from "./guid.js";
 import { createReadStream, createWriteStream } from "node:fs";
 import { link, mkdtemp, open, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -135,15 +136,13 @@ async function readWithSignal(
 function snapshotOperationStatusUri(
   result: Record<string, unknown>,
 ): string | undefined {
-  const uuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const requestId = result.requestId;
   const sandboxId = result.sourceSandboxId;
   if (
     typeof requestId !== "string" ||
     typeof sandboxId !== "string" ||
-    !uuid.test(requestId) ||
-    !uuid.test(sandboxId)
+    !isGuid(requestId) ||
+    !isGuid(sandboxId)
   )
     return undefined;
   return `/api/v1/sandboxes/${sandboxId}/snapshot-operations/${requestId}`;
@@ -185,12 +184,7 @@ export class BorealisApiClient {
           "Cannot establish the sandbox runtime kind; inspect sandbox get before dispatch.",
         );
       if (sandbox.runtimeKind === "microvm") {
-        if (
-          !request.idempotencyKey ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-            request.idempotencyKey,
-          )
-        )
+        if (!request.idempotencyKey || !isGuid(request.idempotencyKey))
           throw new Error(
             `${operation.command} on Runtime v2 requires an explicit UUID --idempotency-key; retain it for recovery.`,
           );
@@ -431,8 +425,8 @@ export class BorealisApiClient {
         Math.min(this.options.requestTimeoutMs ?? 30000, remaining),
       )) as Record<string, unknown>;
       if (
-        !sameUuid(current.requestId, wake.requestId) ||
-        !sameUuid(current.sandboxId, wake.sandboxId)
+        !sameGuid(current.requestId, wake.requestId) ||
+        !sameGuid(current.sandboxId, wake.sandboxId)
       )
         throw new Error(
           "Runtime v2 returned a wake for a different request or machine.",
@@ -1152,47 +1146,35 @@ const operationForImport: Operation = {
   requiresPreflight: true,
 };
 
-function sameUuid(left: unknown, right: unknown): boolean {
-  const uuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return (
-    typeof left === "string" &&
-    typeof right === "string" &&
-    uuid.test(left) &&
-    uuid.test(right) &&
-    left.toLowerCase() === right.toLowerCase()
-  );
-}
-
 function validateRuntimeResult(
   operation: Operation,
   request: PreparedRequest,
   value: unknown,
 ): void {
+  const machine =
+    request.path.match(/\/sandboxes\/([^/]+)\/runtime/)?.[1] ??
+    request.path.match(/\/logical-machines\/([^/]+)\/allocations/)?.[1];
   const fail = (): never => {
+    const identity = isGuid(machine) ? ` Machine: ${machine}.` : "";
+    const guidance =
+      operation.method === "GET"
+        ? " This read-only command did not dispatch a mutation."
+        : " Reconcile the original request identity.";
     throw new TypeError(
-      "Runtime v2 returned an invalid or mismatched result; reconcile the original request identity.",
+      `Runtime v2 returned an invalid or mismatched result for ${operation.command}.${identity}${guidance}`,
     );
   };
   const record = (item: unknown): Record<string, unknown> =>
     item && typeof item === "object" && !Array.isArray(item)
       ? (item as Record<string, unknown>)
       : fail();
-  const uuid = (item: unknown): boolean =>
-    typeof item === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      item,
-    );
-  const machine =
-    request.path.match(/\/sandboxes\/([^/]+)\/runtime/)?.[1] ??
-    request.path.match(/\/logical-machines\/([^/]+)\/allocations/)?.[1];
   const check = (item: unknown): Record<string, unknown> => {
     const data = record(item);
     if (operation.operationId.startsWith("managed_service.")) {
       if (
-        !uuid(data.vmId) ||
-        !sameUuid(data.vmId, machine) ||
-        !uuid(data.requestId) ||
+        !isGuid(data.vmId) ||
+        !sameGuid(data.vmId, machine) ||
+        !isGuid(data.requestId) ||
         !Number.isSafeInteger(data.configurationGeneration) ||
         Number(data.configurationGeneration) < 1 ||
         typeof data.state !== "string" ||
@@ -1213,16 +1195,16 @@ function validateRuntimeResult(
           : operation.operationId === "managed_service.capture"
             ? record(request.body).launchRequestId
             : launch;
-      if (!sameUuid(data.requestId, expectedLaunch)) fail();
+      if (!sameGuid(data.requestId, expectedLaunch)) fail();
       return data;
     }
     if (operation.operationId.startsWith("background_lease.")) {
       if (
-        !uuid(data.vmId) ||
-        !sameUuid(data.vmId, machine) ||
-        !uuid(data.requestId) ||
-        !uuid(data.leaseId) ||
-        !uuid(data.incarnationId) ||
+        !isGuid(data.vmId) ||
+        !sameGuid(data.vmId, machine) ||
+        !isGuid(data.requestId) ||
+        !isGuid(data.leaseId) ||
+        !isGuid(data.incarnationId) ||
         !Number.isSafeInteger(data.ownershipEpoch) ||
         Number(data.ownershipEpoch) < 1 ||
         typeof data.expiresAt !== "string" ||
@@ -1236,28 +1218,28 @@ function validateRuntimeResult(
           : request.path.match(
               /\/background-leases\/([^/]+)(?:\/renew)?$/,
             )?.[1];
-      if (!sameUuid(data.requestId, expectedRequest)) fail();
+      if (!sameGuid(data.requestId, expectedRequest)) fail();
       return data;
     }
     if (operation.operationId.startsWith("private_network.")) {
       if (
-        !uuid(data.requestId) ||
-        !uuid(data.resourceId) ||
+        !isGuid(data.requestId) ||
+        !isGuid(data.resourceId) ||
         typeof data.kind !== "string" ||
         typeof data.state !== "string" ||
-        !sameUuid(data.requestId, request.path.split("/").at(-1))
+        !sameGuid(data.requestId, request.path.split("/").at(-1))
       )
         fail();
       return data;
     }
     if (operation.operationId.startsWith("vm_network_configuration.")) {
       if (
-        !uuid(data.vmId) ||
-        !sameUuid(data.vmId, machine) ||
+        !isGuid(data.vmId) ||
+        !sameGuid(data.vmId, machine) ||
         !Number.isSafeInteger(data.generation) ||
         Number(data.generation) < 1 ||
         (data.defaultDnsAttachmentId !== null &&
-          !uuid(data.defaultDnsAttachmentId))
+          !isGuid(data.defaultDnsAttachmentId))
       )
         fail();
       return data;
@@ -1266,7 +1248,7 @@ function validateRuntimeResult(
       /^(vnet|vnet_attachment|network_service)\./.test(operation.operationId)
     ) {
       if (
-        !uuid(data.id) ||
+        !isGuid(data.id) ||
         !Number.isSafeInteger(data.generation) ||
         Number(data.generation) < 1
       )
@@ -1274,13 +1256,13 @@ function validateRuntimeResult(
       const resource = request.path.match(
         /^\/api\/v1\/(?:vnets|vnet-attachments|network-services)\/([^/]+)$/,
       )?.[1];
-      if (resource && !sameUuid(data.id, resource)) fail();
+      if (resource && !sameGuid(data.id, resource)) fail();
       if (operation.operationId.startsWith("vnet_attachment.")) {
         if (
-          !uuid(data.vnetId) ||
-          !uuid(data.vmId) ||
+          !isGuid(data.vnetId) ||
+          !isGuid(data.vmId) ||
           typeof data.privateAddress !== "string" ||
-          !uuid(data.operationId) ||
+          !isGuid(data.operationId) ||
           !["present", "absent"].includes(String(data.desiredMembership)) ||
           !["attaching", "attached", "detaching", "detached"].includes(
             String(data.membershipStatus),
@@ -1288,13 +1270,13 @@ function validateRuntimeResult(
           !["inactive", "applying", "active", "error"].includes(
             String(data.connectivity),
           ) ||
-          (machine && !sameUuid(data.vmId, machine))
+          (machine && !sameGuid(data.vmId, machine))
         )
           fail();
       } else if (operation.operationId.startsWith("network_service.")) {
         if (
-          !uuid(data.vnetId) ||
-          !uuid(data.targetAttachmentId) ||
+          !isGuid(data.vnetId) ||
+          !isGuid(data.targetAttachmentId) ||
           typeof data.label !== "string" ||
           typeof data.qualifiedHost !== "string"
         )
@@ -1312,7 +1294,7 @@ function validateRuntimeResult(
       operation.operationId !== "runtime_template.activate"
     ) {
       if (
-        !uuid(data.templateId) ||
+        !isGuid(data.templateId) ||
         !Number.isInteger(data.revision) ||
         Number(data.revision) < 1 ||
         typeof data.state !== "string"
@@ -1331,7 +1313,7 @@ function validateRuntimeResult(
     }
     if (operation.operationId === "logical_machine.turn.renew") {
       if (
-        !uuid(data.leaseId) ||
+        !isGuid(data.leaseId) ||
         typeof data.expiresAt !== "string" ||
         !Number.isFinite(Date.parse(data.expiresAt))
       )
@@ -1339,7 +1321,7 @@ function validateRuntimeResult(
       return data;
     }
     if (
-      !uuid(data.sandboxId) ||
+      !isGuid(data.sandboxId) ||
       (machine &&
         String(data.sandboxId).toLowerCase() !== machine.toLowerCase())
     )
@@ -1352,12 +1334,12 @@ function validateRuntimeResult(
         "logical_machine.hibernate",
         "runtime_template.activate",
       ].includes(operation.operationId) &&
-      !sameUuid(data.requestId, request.idempotencyKey)
+      !sameGuid(data.requestId, request.idempotencyKey)
     )
       fail();
     if (
       operation.operationId === "logical_machine.hibernate" &&
-      (!uuid(data.operationId) ||
+      (!isGuid(data.operationId) ||
         data.kind !== "local_disk_eviction" ||
         !["InProgress", "Committed", "Failed"].includes(String(data.state)))
     )
@@ -1374,10 +1356,10 @@ function validateRuntimeResult(
           ? request.path.split("/").at(-1)
           : request.idempotencyKey;
       if (
-        !sameUuid(data.requestId, expectedRequest) ||
-        !sameUuid(data.turnId, turn) ||
-        !uuid(data.activityLeaseId) ||
-        !uuid(data.incarnationId) ||
+        !sameGuid(data.requestId, expectedRequest) ||
+        !sameGuid(data.turnId, turn) ||
+        !isGuid(data.activityLeaseId) ||
+        !isGuid(data.incarnationId) ||
         !Number.isSafeInteger(data.ownershipEpoch) ||
         Number(data.ownershipEpoch) < 1 ||
         typeof data.expiresAt !== "string" ||
@@ -1387,7 +1369,7 @@ function validateRuntimeResult(
       if (operation.method !== "GET") {
         const body = record(request.body);
         if (
-          !sameUuid(data.incarnationId, body.expectedIncarnationId) ||
+          !sameGuid(data.incarnationId, body.expectedIncarnationId) ||
           data.ownershipEpoch !== body.expectedOwnershipEpoch
         )
           fail();
@@ -1395,16 +1377,16 @@ function validateRuntimeResult(
     }
     if (operation.operationId.startsWith("logical_machine.allocation.")) {
       const requested = request.path.split("/").at(-1);
-      if (!sameUuid(data.requestId, requested)) fail();
+      if (!sameGuid(data.requestId, requested)) fail();
     }
     if (
       operation.operationId.endsWith("wake.get") ||
       operation.operationId.endsWith("operation.get")
     )
-      if (!sameUuid(data.requestId, request.path.split("/").at(-1))) fail();
+      if (!sameGuid(data.requestId, request.path.split("/").at(-1))) fail();
     if (
       operation.operationId === "runtime_template.activate" &&
-      !sameUuid(data.sandboxId, record(request.body).sandboxId)
+      !sameGuid(data.sandboxId, record(request.body).sandboxId)
     )
       fail();
     return data;

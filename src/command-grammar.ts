@@ -265,6 +265,7 @@ export function createCommandGrammar(): Command {
   const program = new Command()
     .name("borealis")
     .description("Official command-line client for the Borealis public API")
+    .configureHelp({ sortSubcommands: true })
     .helpOption(false)
     .option("-h, --help")
     .option("-V, --version")
@@ -289,7 +290,7 @@ export function createCommandGrammar(): Command {
       path = path ? `${path} ${token}` : token;
       let node = nodes.get(path);
       if (!node) {
-        node = new Command(token);
+        node = new Command(token).configureHelp({ sortSubcommands: true });
         parent.addCommand(node);
         nodes.set(path, node);
       }
@@ -313,7 +314,7 @@ export function createCommandGrammar(): Command {
   auth.command("logout").action(() => undefined);
   program.command("completion <shell>").action(() => undefined);
   program.command("version").action(() => undefined);
-  program.command("help").action(() => undefined);
+  program.command("help [command...]").action(() => undefined);
   program.action(() => undefined);
   program.exitOverride();
   program.configureOutput({ writeErr: () => undefined });

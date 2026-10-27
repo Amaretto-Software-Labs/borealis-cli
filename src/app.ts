@@ -14,7 +14,10 @@ import {
   runtimeLifecycleMappings,
 } from "./catalog.js";
 import { completion } from "./completion.js";
-import { validateCommandGrammar } from "./command-grammar.js";
+import {
+  createCommandGrammar,
+  validateCommandGrammar,
+} from "./command-grammar.js";
 import { defaults, validateOrigin } from "./config.js";
 import { writeCredentialFile } from "./credential-file.js";
 import { prepareRequest } from "./invocation.js";
@@ -148,25 +151,43 @@ async function confirm(operationId: string): Promise<boolean> {
   }
 }
 
-function help(): string {
-  const groups = operations.reduce<Record<string, string[]>>(
+function help(argv: readonly string[] = []): string {
+  const { command } = parseGlobals(argv);
+  const path = command[0] === "help" ? command.slice(1) : command;
+  const program = createCommandGrammar();
+  let node = program;
+  for (const token of path) {
+    const child = node.commands.find(
+      (candidate) =>
+        candidate.name() === token || candidate.aliases().includes(token),
+    );
+    if (!child) break;
+    node = child;
+  }
+  if (node !== program) return node.helpInformation();
+
+  const groups = operations.reduce<Record<string, number>>(
     (result, operation) => {
       const group = operation.command.split(" ")[0]!;
-      (result[group] ??= []).push(operation.command);
+      result[group] = (result[group] ?? 0) + 1;
       return result;
     },
     {},
   );
-  return `Borealis CLI\n\nUsage: borealis [global options] <command> [arguments] [options]\n\nGlobal options:\n  --api <origin>  --identity <origin>  --app <origin>\n  --profile <name>  --organization <id>  --token-file <path>\n  --json  --yes\n\nCommands:\n${Object.entries(
-    groups,
-  )
-    .map(
-      ([group, commands]) =>
-        `  ${group.padEnd(18)}${commands.length} API operations`,
-    )
-    .join(
-      "\n",
-    )}\n  auth login|whoami|logout\n  completion bash|zsh|fish\n\nUse --set key=value or --body '{...}' for operation request fields. Path identifiers are positional.\n`;
+  const commandDescriptions: [string, string][] = Object.entries(groups).map(
+    ([group, count]) => [group, `${count} API operations`],
+  );
+  commandDescriptions.push(
+    ["auth", "login | logout | whoami"],
+    ["completion", "bash | fish | zsh"],
+    ["help", "Show command help"],
+    ["version", "Show the CLI version"],
+  );
+  const commands = commandDescriptions
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, description]) => `  ${name.padEnd(18)}${description}`)
+    .join("\n");
+  return `Borealis CLI\n\nUsage: borealis [global options] <command> [arguments] [options]\n\nGlobal options:\n  --api <origin>  --identity <origin>  --app <origin>\n  --profile <name>  --organization <id>  --token-file <path>\n  --json  --yes\n\nCommands:\n${commands}\n\nUse --set key=value or --body '{...}' for operation request fields. Path identifiers are positional.\n`;
 }
 
 async function runInternal(
@@ -176,7 +197,7 @@ async function runInternal(
   signal?.throwIfAborted();
   const { options, command, apiExplicit } = parseGlobals(argv);
   if (command.length === 0 || ["help", "-h", "--help"].includes(command[0]!)) {
-    process.stdout.write(help());
+    process.stdout.write(help(argv));
     return 0;
   }
   if (
@@ -476,7 +497,7 @@ export async function run(
 ): Promise<number> {
   try {
     if (argv.includes("--help") || argv.includes("-h")) {
-      process.stdout.write(help());
+      process.stdout.write(help(argv));
       return 0;
     }
     validateCommandGrammar(argv);
