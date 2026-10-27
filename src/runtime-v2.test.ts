@@ -66,6 +66,153 @@ describe("Runtime v2 client contract", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    "12345678-1234-d4a0-2224-123456789abc",
+    "12345678-1234-fa64-b565-123456789abc",
+    "12345678-1234-6944-3449-123456789abc",
+  ])(
+    "reads an existing server-derived .NET Guid before deciding whether to hibernate: %s",
+    async (derivedVm) => {
+      const operation = operations.find(
+        (op) => op.operationId === "logical_machine.get",
+      )!;
+      const receipt = {
+        sandboxId: derivedVm,
+        logicalState: "Available",
+        executionState: "Lost",
+      };
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          json({ enabled: true, operations: [operation.operationId] }),
+        )
+        .mockResolvedValueOnce(json(receipt));
+      vi.stubGlobal("fetch", fetcher);
+      await expect(
+        client().invoke(
+          operation,
+          await prepareRequest(operation, [derivedVm]),
+        ),
+      ).resolves.toEqual(receipt);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(
+        fetcher.mock.calls.every(([, init]) => init.method === "GET"),
+      ).toBe(true);
+    },
+  );
+
+  it("preserves server-derived operation and reconciliation identities without weakening exact binding", async () => {
+    const derived = "12345678-1234-d4a0-2224-123456789abc";
+    const hibernate = operations.find(
+      (op) => op.operationId === "logical_machine.hibernate",
+    )!;
+    const read = operations.find(
+      (op) => op.operationId === "logical_machine.operation.get",
+    )!;
+    const receipt = {
+      sandboxId: vm,
+      requestId: derived,
+      operationId: derived,
+      kind: "local_disk_eviction",
+      state: "Committed",
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ enabled: true, operations: [hibernate.operationId] }),
+      )
+      .mockResolvedValueOnce(json(receipt))
+      .mockResolvedValueOnce(
+        json({ enabled: true, operations: [read.operationId] }),
+      )
+      .mockResolvedValueOnce(json(receipt));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      client().invoke(
+        hibernate,
+        await prepareRequest(hibernate, [vm, "--idempotency-key", derived]),
+      ),
+    ).resolves.toEqual(receipt);
+    await expect(
+      client().invoke(read, await prepareRequest(read, [vm, derived])),
+    ).resolves.toEqual(receipt);
+  });
+
+  it.each([
+    "00000000-0000-0000-0000-000000000000",
+    "12345678-1234-d4a0-2224-123456789abz",
+    "123456781234d4a02224123456789abc",
+    key,
+  ])(
+    "rejects a malformed, empty or different machine identity without dispatching a mutation: %s",
+    async (returnedVm) => {
+      const operation = operations.find(
+        (op) => op.operationId === "logical_machine.get",
+      )!;
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          json({ enabled: true, operations: [operation.operationId] }),
+        )
+        .mockResolvedValueOnce(
+          json({
+            sandboxId: returnedVm,
+            privateDiagnostic: "never-echo-this-response",
+          }),
+        );
+      vi.stubGlobal("fetch", fetcher);
+      const error = await client()
+        .invoke(operation, await prepareRequest(operation, [vm]))
+        .catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(TypeError);
+      expect((error as Error).message).toContain(
+        `logical-machine get. Machine: ${vm}`,
+      );
+      expect((error as Error).message).toContain(
+        "read-only command did not dispatch a mutation",
+      );
+      expect((error as Error).message).not.toContain(
+        "never-echo-this-response",
+      );
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(
+        fetcher.mock.calls.every(([, init]) => init.method === "GET"),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["request", "machine", "kind", "state"])(
+    "retains the original mutation key and never retries a mismatched hibernation %s",
+    async (mismatch) => {
+      const operation = operations.find(
+        (op) => op.operationId === "logical_machine.hibernate",
+      )!;
+      const receipt = {
+        requestId: mismatch === "request" ? vm : key,
+        sandboxId: mismatch === "machine" ? key : vm,
+        operationId: "12345678-1234-d4a0-2224-123456789abc",
+        kind: mismatch === "kind" ? "another_operation" : "local_disk_eviction",
+        state: mismatch === "state" ? "Unconfirmed" : "InProgress",
+      };
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          json({ enabled: true, operations: [operation.operationId] }),
+        )
+        .mockResolvedValueOnce(json(receipt, 202));
+      vi.stubGlobal("fetch", fetcher);
+      const error = await client()
+        .invoke(
+          operation,
+          await prepareRequest(operation, [vm, "--idempotency-key", key]),
+        )
+        .catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(AmbiguousDispatchError);
+      expect((error as AmbiguousDispatchError).idempotencyKey).toBe(key);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("changes computer durability using the stable operation key", async () => {
     const change = operations.find(
       (op) => op.operationId === "logical_machine.durability.change",

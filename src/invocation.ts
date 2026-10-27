@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isGuid } from "./guid.js";
 import type { Readable } from "node:stream";
 import {
   runtimeLifecycleMappings,
@@ -561,12 +562,7 @@ export async function prepareRequest(
         "Runtime v2 outputWatermark must be an exact non-negative safe integer.",
       );
     const capture = values.captureBoundaryId ?? body?.captureBoundaryId;
-    if (
-      typeof capture !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        capture,
-      )
-    )
+    if (typeof capture !== "string" || !isGuid(capture))
       throw new Error(
         "Runtime v2 turn completion requires a stable UUID captureBoundaryId.",
       );
@@ -615,10 +611,7 @@ export async function prepareRequest(
   if (
     runtimeOperation &&
     operation.idempotency === "idempotency-key" &&
-    (!explicit ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        explicit,
-      ))
+    (!explicit || !isGuid(explicit))
   )
     throw new Error(
       "Runtime v2 mutations require an explicit UUID --idempotency-key; preserve it for reconciliation.",
