@@ -173,18 +173,66 @@ const sdkOnlyTransportIds = new Set([
 // Checkpoint transport is SDK-only and requires both sandbox write and exec
 // authority. An opaque action route is not an administrative bypass.
 const checkpointTransports = [
-  ["sandbox.task_checkpoint.context", "GET", "/api/v1/sandboxes/{sandboxId}/task-checkpoints/context", "safe", "safe", "GetTaskCheckpointContextAsync", "read"],
-  ["sandbox.task_checkpoint.operation", "POST", "/api/v1/sandboxes/{sandboxId}/task-checkpoints/{action}", "operation-and-runtime-fence", "safe-with-same-fence", "CaptureTaskCheckpointAsync", "write"],
-  ["sandbox.task_checkpoint.upload", "POST", "/api/v1/sandboxes/{sandboxId}/task-checkpoints/transfers/upload", "offset-and-hash", "safe-with-same-fence", "UploadTaskCheckpointChunkAsync", "write"],
-  ["sandbox.task_checkpoint.download", "POST", "/api/v1/sandboxes/{sandboxId}/task-checkpoints/transfers/download", "offset-and-hash", "safe-with-same-fence", "DownloadTaskCheckpointChunkAsync", "read"],
+  [
+    "sandbox.task_checkpoint.context",
+    "GET",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/context",
+    "safe",
+    "safe",
+    "GetTaskCheckpointContextAsync",
+    "read",
+  ],
+  [
+    "sandbox.task_checkpoint.operation",
+    "POST",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/{action}",
+    "operation-and-runtime-fence",
+    "safe-with-same-fence",
+    "CaptureTaskCheckpointAsync",
+    "write",
+  ],
+  [
+    "sandbox.task_checkpoint.upload",
+    "POST",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/transfers/upload",
+    "offset-and-hash",
+    "safe-with-same-fence",
+    "UploadTaskCheckpointChunkAsync",
+    "write",
+  ],
+  [
+    "sandbox.task_checkpoint.download",
+    "POST",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/transfers/download",
+    "offset-and-hash",
+    "safe-with-same-fence",
+    "DownloadTaskCheckpointChunkAsync",
+    "read",
+  ],
 ];
-for (const [id, method, path, idempotency, retry, client, risk] of checkpointTransports) {
+for (const [
+  id,
+  method,
+  path,
+  idempotency,
+  retry,
+  client,
+  risk,
+] of checkpointTransports) {
   const operation = transportOperations.find((item) => item.operationId === id);
-  const expectedTrailing = risk === "read" ? /^\s*,\s*Risk:\s*"read"\s*\),?\s*$/ : /^\s*\),?\s*$/;
-  if (!operation || operation.httpMethod !== method || operation.path !== path ||
-      operation.scope !== "borealis.sandboxes.write+borealis.sandboxes.exec" ||
-      operation.ownership !== "organization" || operation.idempotency !== idempotency ||
-      operation.retry !== retry || operation.method !== client || !expectedTrailing.test(operation.trailing)) {
+  const expectedTrailing =
+    risk === "read" ? /^\s*,\s*Risk:\s*"read"\s*\),?\s*$/ : /^\s*\),?\s*$/;
+  if (
+    !operation ||
+    operation.httpMethod !== method ||
+    operation.path !== path ||
+    operation.scope !== "borealis.sandboxes.write+borealis.sandboxes.exec" ||
+    operation.ownership !== "organization" ||
+    operation.idempotency !== idempotency ||
+    operation.retry !== retry ||
+    operation.method !== client ||
+    !expectedTrailing.test(operation.trailing)
+  ) {
     throw new Error(`Unrecognized or changed checkpoint SDK transport: ${id}.`);
   }
 }
