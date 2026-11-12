@@ -241,13 +241,16 @@ for (const [
 }
 // The catalog groups checkpoint actions under one SDK-only transport. Pin each
 // typed native rollback operation so routing drift cannot hide behind the generic row.
-const checkpointClient = await readFile(
-  resolve(
-    sourceRoot,
-    "backend/Borealis.Client/BorealisClient.TaskCheckpoints.cs",
-  ),
-  "utf8",
-);
+const checkpointClient = (
+  await Promise.all(
+    [
+      "BorealisClient.TaskCheckpoints.cs",
+      "BorealisClient.TaskCheckpointNativeAbsent.cs",
+    ].map((file) =>
+      readFile(resolve(sourceRoot, "backend/Borealis.Client", file), "utf8"),
+    ),
+  )
+).join("\n");
 for (const [method, request, action] of [
   [
     "PrepareTaskCheckpointNativeRestoreAsync",
@@ -258,6 +261,11 @@ for (const [method, request, action] of [
     "PrepareTaskCheckpointNativeResetAsync",
     "GuestTaskCheckpointNativeResetRequest",
     "native-reset",
+  ],
+  [
+    "PrepareTaskCheckpointNativeRestoreAbsentAsync",
+    "GuestTaskCheckpointNativeRestoreAbsentRequest",
+    "native-restore-absent",
   ],
 ]) {
   const binding = new RegExp(
