@@ -239,9 +239,8 @@ for (const [
     throw new Error(`Unrecognized or changed checkpoint SDK transport: ${id}.`);
   }
 }
-// The operation catalog intentionally groups checkpoint actions under one
-// parameterized SDK-only transport. Pin the native rollback binding as well,
-// so a missing or misrouted typed method cannot hide behind that generic row.
+// The catalog groups checkpoint actions under one SDK-only transport. Pin each
+// typed native rollback operation so routing drift cannot hide behind the generic row.
 const checkpointClient = await readFile(
   resolve(
     sourceRoot,
@@ -249,12 +248,25 @@ const checkpointClient = await readFile(
   ),
   "utf8",
 );
-if (
-  !/PrepareTaskCheckpointNativeRestoreAsync\s*\([^)]*GuestTaskCheckpointNativeRestoreRequest[^)]*\)\s*=>\s*TaskCheckpointRequestAsync\(sandboxId,\s*"native-restore",\s*request,/s.test(
-    checkpointClient,
-  )
-) {
-  throw new Error("Missing or misrouted native rollback SDK transport.");
+for (const [method, request, action] of [
+  [
+    "PrepareTaskCheckpointNativeRestoreAsync",
+    "GuestTaskCheckpointNativeRestoreRequest",
+    "native-restore",
+  ],
+  [
+    "PrepareTaskCheckpointNativeResetAsync",
+    "GuestTaskCheckpointNativeResetRequest",
+    "native-reset",
+  ],
+]) {
+  const binding = new RegExp(
+    `${method}\\s*\\([^)]*${request}[^)]*\\)\\s*=>\\s*TaskCheckpointRequestAsync\\(sandboxId,\\s*"${action}",\\s*request,`,
+    "s",
+  );
+  if (!binding.test(checkpointClient)) {
+    throw new Error(`Missing or misrouted ${action} SDK transport.`);
+  }
 }
 const implementedSection = typescriptClient.match(
   /implementedTransportOperationIds = Object\.freeze\(\[(.*?)\] as const\)/s,
