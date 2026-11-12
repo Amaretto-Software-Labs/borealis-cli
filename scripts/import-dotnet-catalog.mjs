@@ -239,6 +239,23 @@ for (const [
     throw new Error(`Unrecognized or changed checkpoint SDK transport: ${id}.`);
   }
 }
+// The operation catalog intentionally groups checkpoint actions under one
+// parameterized SDK-only transport. Pin the native rollback binding as well,
+// so a missing or misrouted typed method cannot hide behind that generic row.
+const checkpointClient = await readFile(
+  resolve(
+    sourceRoot,
+    "backend/Borealis.Client/BorealisClient.TaskCheckpoints.cs",
+  ),
+  "utf8",
+);
+if (
+  !/PrepareTaskCheckpointNativeRestoreAsync\s*\([^)]*GuestTaskCheckpointNativeRestoreRequest[^)]*\)\s*=>\s*TaskCheckpointRequestAsync\(sandboxId,\s*"native-restore",\s*request,/s.test(
+    checkpointClient,
+  )
+) {
+  throw new Error("Missing or misrouted native rollback SDK transport.");
+}
 const implementedSection = typescriptClient.match(
   /implementedTransportOperationIds = Object\.freeze\(\[(.*?)\] as const\)/s,
 )?.[1];
