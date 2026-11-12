@@ -170,8 +170,8 @@ const sdkOnlyTransportIds = new Set([
   "sandbox.task_checkpoint.upload",
   "sandbox.task_checkpoint.download",
 ]);
-// Checkpoint transport is SDK-only and requires both sandbox write and exec
-// authority. An opaque action route is not an administrative bypass.
+// Checkpoint transport is SDK-only and requires sandbox write and exec scopes.
+// Except context discovery, it also requires the configured Product service principal.
 const checkpointTransports = [
   [
     "sandbox.task_checkpoint.context",
@@ -227,7 +227,10 @@ for (const [
     operation.httpMethod !== method ||
     operation.path !== path ||
     operation.scope !== "borealis.sandboxes.write+borealis.sandboxes.exec" ||
-    operation.ownership !== "organization" ||
+    operation.ownership !==
+      (id === "sandbox.task_checkpoint.context"
+        ? "organization"
+        : "organization-and-product-service-principal") ||
     operation.idempotency !== idempotency ||
     operation.retry !== retry ||
     operation.method !== client ||
