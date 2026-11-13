@@ -165,7 +165,117 @@ const sdkOnlyTransportIds = new Set([
   "runtime_image_context.upload",
   "runtime_image_template.artifact",
   "runtime_image_template.artifact.head",
+  "sandbox.task_checkpoint.context",
+  "sandbox.task_checkpoint.operation",
+  "sandbox.task_checkpoint.upload",
+  "sandbox.task_checkpoint.download",
 ]);
+// Checkpoint transport is SDK-only and requires sandbox write and exec scopes.
+// Except context discovery, it also requires the configured Product service principal.
+const checkpointTransports = [
+  [
+    "sandbox.task_checkpoint.context",
+    "GET",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/context",
+    "safe",
+    "safe",
+    "GetTaskCheckpointContextAsync",
+    "read",
+  ],
+  [
+    "sandbox.task_checkpoint.operation",
+    "POST",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/{action}",
+    "operation-and-runtime-fence",
+    "safe-with-same-fence",
+    "CaptureTaskCheckpointAsync",
+    "write",
+  ],
+  [
+    "sandbox.task_checkpoint.upload",
+    "POST",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/transfers/upload",
+    "offset-and-hash",
+    "safe-with-same-fence",
+    "UploadTaskCheckpointChunkAsync",
+    "write",
+  ],
+  [
+    "sandbox.task_checkpoint.download",
+    "POST",
+    "/api/v1/sandboxes/{sandboxId}/task-checkpoints/transfers/download",
+    "offset-and-hash",
+    "safe-with-same-fence",
+    "DownloadTaskCheckpointChunkAsync",
+    "read",
+  ],
+];
+for (const [
+  id,
+  method,
+  path,
+  idempotency,
+  retry,
+  client,
+  risk,
+] of checkpointTransports) {
+  const operation = transportOperations.find((item) => item.operationId === id);
+  const expectedTrailing =
+    risk === "read" ? /^\s*,\s*Risk:\s*"read"\s*\),?\s*$/ : /^\s*\),?\s*$/;
+  if (
+    !operation ||
+    operation.httpMethod !== method ||
+    operation.path !== path ||
+    operation.scope !== "borealis.sandboxes.write+borealis.sandboxes.exec" ||
+    operation.ownership !==
+      (id === "sandbox.task_checkpoint.context"
+        ? "organization"
+        : "organization-and-product-service-principal") ||
+    operation.idempotency !== idempotency ||
+    operation.retry !== retry ||
+    operation.method !== client ||
+    !expectedTrailing.test(operation.trailing)
+  ) {
+    throw new Error(`Unrecognized or changed checkpoint SDK transport: ${id}.`);
+  }
+}
+// The catalog groups checkpoint actions under one SDK-only transport. Pin each
+// typed native rollback operation so routing drift cannot hide behind the generic row.
+const checkpointClient = (
+  await Promise.all(
+    [
+      "BorealisClient.TaskCheckpoints.cs",
+      "BorealisClient.TaskCheckpointNativeAbsent.cs",
+    ].map((file) =>
+      readFile(resolve(sourceRoot, "backend/Borealis.Client", file), "utf8"),
+    ),
+  )
+).join("\n");
+for (const [method, request, action] of [
+  [
+    "PrepareTaskCheckpointNativeRestoreAsync",
+    "GuestTaskCheckpointNativeRestoreRequest",
+    "native-restore",
+  ],
+  [
+    "PrepareTaskCheckpointNativeResetAsync",
+    "GuestTaskCheckpointNativeResetRequest",
+    "native-reset",
+  ],
+  [
+    "PrepareTaskCheckpointNativeRestoreAbsentAsync",
+    "GuestTaskCheckpointNativeRestoreAbsentRequest",
+    "native-restore-absent",
+  ],
+]) {
+  const binding = new RegExp(
+    `${method}\\s*\\([^)]*${request}[^)]*\\)\\s*=>\\s*TaskCheckpointRequestAsync\\(sandboxId,\\s*"${action}",\\s*request,`,
+    "s",
+  );
+  if (!binding.test(checkpointClient)) {
+    throw new Error(`Missing or misrouted ${action} SDK transport.`);
+  }
+}
 const implementedSection = typescriptClient.match(
   /implementedTransportOperationIds = Object\.freeze\(\[(.*?)\] as const\)/s,
 )?.[1];
