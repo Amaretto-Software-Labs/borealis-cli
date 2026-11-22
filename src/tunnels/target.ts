@@ -3,7 +3,7 @@ import { connect as connectTcp, type Socket } from "node:net";
 import { readFile } from "node:fs/promises";
 import * as tls from "node:tls";
 
-export function parseName(name: string): string {
+export function parseRouteName(name: string): string {
   if (
     name.trim() !== name ||
     !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name)
@@ -12,6 +12,14 @@ export function parseName(name: string): string {
       "Tunnel names must be lowercase DNS labels of 1–63 characters.",
     );
   }
+  return name;
+}
+
+export function parseName(name: string): string {
+  parseRouteName(name);
+  if (name === "xn") throw new Error("The tunnel name xn is reserved.");
+  if (name.includes("--"))
+    throw new Error("Tunnel names cannot contain consecutive hyphens.");
   return name;
 }
 

@@ -10,7 +10,8 @@ vi.mock("./relay.js", () => ({ relayControl }));
 const api = "https://api.example.test";
 const first: Attachment = {
   name: "sandbox",
-  url: "https://sandbox.tunnel.example.test",
+  routeName: "sandbox--example",
+  url: "https://sandbox--example.tunnel.example.test",
   relayUrl: "https://relay.example.test",
   session: "a563e5bb-e4b1-42b6-bf72-9b99a1bf6872",
   ticket: "ticket-initial-test-secret",
@@ -134,9 +135,15 @@ it("resumes a named attachment with its prior generation and ends the replacemen
 
 it("never sends Cloud credentials or organization headers for anonymous publication", async () => {
   const { fetcher } = capture();
+  const guest = {
+    ...first,
+    name: "guest-example",
+    routeName: "guest-example",
+    url: "https://guest-example.tunnel.example.test",
+  };
   const controller = new AbortController();
   fetcher
-    .mockResolvedValueOnce(Response.json(first))
+    .mockResolvedValueOnce(Response.json(guest))
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
   relayControl.mockImplementationOnce(async () => {
     controller.abort();
@@ -149,7 +156,7 @@ it("never sends Cloud credentials or organization headers for anonymous publicat
     ),
   ).toBe(130);
   expect(fetcher.mock.calls[0]?.[0].pathname).toBe(
-    "/api/v1/tunnels/guest/attachments",
+    "/api/v1/tunnels/attachments",
   );
   expect(fetcher.mock.calls[0]?.[1].body).toBe("{}");
   for (const [, init] of fetcher.mock.calls) {
@@ -187,6 +194,8 @@ it("stops reconnecting when the API revokes the attachment", async () => {
 
 it.each([
   { name: "other-name" },
+  { routeName: "invalid/route" },
+  { routeName: "other--example" },
   { relayUrl: "http://relay.example.test" },
   { relayUrl: "https://relay.example.test/token" },
   { url: "tcp://sandbox.tunnel.example.test:30123" },
@@ -354,3 +363,100 @@ it.each([429, 503, 400])(
     }
   },
 );
+
+it("publishes a named guest tunnel with organization credentials", async () => {
+  const { fetcher } = capture();
+  const controller = new AbortController();
+  const named = {
+    ...first,
+    name: "guest",
+    routeName: "guest--example",
+    url: "https://guest--example.tunnel.example.test",
+  };
+  fetcher
+    .mockResolvedValueOnce(Response.json(named))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  relayControl.mockImplementationOnce(async () => {
+    controller.abort();
+    return false;
+  });
+  expect(
+    await run(
+      [
+        "--api",
+        api,
+        "--organization",
+        "org-guid",
+        "tunnel",
+        "http",
+        "3000",
+        "--name",
+        "guest",
+      ],
+      controller.signal,
+    ),
+  ).toBe(130);
+  expect(fetcher.mock.calls[0]?.[0].pathname).toBe(
+    "/api/v1/tunnels/guest/attachments",
+  );
+  expect(
+    new Headers(fetcher.mock.calls[0]?.[1].headers).get("x-organization-id"),
+  ).toBe("org-guid");
+});
+
+it("rejects the route delimiter in a friendly tunnel name", async () => {
+  const { fetcher } = capture();
+  expect(
+    await run(["--api", api, "tunnel", "http", "3000", "--name", "app--org"]),
+  ).toBe(1);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(["http", "tcp"])(
+  "rejects the reserved name xn for %s",
+  async (protocol) => {
+    const { fetcher } = capture();
+    expect(
+      await run(["--api", api, "tunnel", protocol, "3000", "--name", "xn"]),
+    ).toBe(1);
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  "sandbox",
+  "other--example",
+  "sandbox--",
+  "sandbox--bad--org",
+  `sandbox--${"a".repeat(37)}`,
+])(
+  "rejects a named TCP attachment with invalid route %s",
+  async (routeName) => {
+    const { fetcher } = capture();
+    fetcher.mockResolvedValueOnce(
+      Response.json({
+        ...first,
+        routeName,
+        url: "tcp://tcp.example.test:21000",
+      }),
+    );
+    expect(
+      await run(["--api", api, "tunnel", "tcp", "3000", "--name", first.name]),
+    ).toBe(1);
+    expect(relayControl).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects a guest route that differs from its friendly name even when its URL matches", async () => {
+  const { fetcher } = capture();
+  fetcher.mockResolvedValueOnce(
+    Response.json({
+      ...first,
+      name: "guest-one",
+      routeName: "guest-two",
+      url: "https://guest-two.tunnel.example.test",
+    }),
+  );
+  expect(await run(["--api", api, "tunnel", "http", "3000"])).toBe(1);
+  expect(relayControl).not.toHaveBeenCalled();
+});

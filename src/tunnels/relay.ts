@@ -6,6 +6,7 @@ import { bridgeTcp } from "./tcp.js";
 
 export interface Attachment {
   name: string;
+  routeName: string;
   url: string;
   relayUrl: string;
   session: string;
@@ -49,7 +50,7 @@ export function relayControl(
 ): Promise<boolean> {
   const streams = new AbortController();
   setMaxListeners(0, streams.signal);
-  const path = `/v1/tunnels/${attachment.name}`;
+  const path = `/v1/tunnels/${attachment.routeName}`;
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
     const control = relaySocket(

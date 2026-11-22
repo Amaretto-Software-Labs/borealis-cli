@@ -250,7 +250,14 @@ borealis tunnel http 3000
 
 Sign in to a Borealis Cloud profile to reserve a stable address. The first
 successful publication reserves the name. Use the same name when the local port
-changes. TCP requires a named reservation and a relay with public TCP ingress.
+changes. Names are scoped to the selected organization. Named HTTP addresses use
+`<name>--<organization>` as their host label. TCP addresses use the relay’s TCP
+host and assigned port. Friendly names are lowercase DNS labels and cannot
+contain `--`, which separates the name from the organization. Names also
+cannot be `xn`, which would produce an IDNA prefix. The attachment API
+returns the friendly `name` and the unique `routeName` used by the relay. Guest
+attachments use the same value for both. TCP requires a named reservation and a
+relay with public TCP ingress.
 
 ```bash
 borealis auth login

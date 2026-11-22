@@ -8,6 +8,7 @@ import { writeResult } from "../output.js";
 import { relayControl, type Attachment } from "./relay.js";
 import {
   parseName,
+  parseRouteName,
   parseTarget,
   upstreamTrust,
   type Target,
@@ -19,6 +20,7 @@ const token = z
   .refine((value) => value === value.trim());
 const attachmentSchema = z.object({
   name: z.string(),
+  routeName: z.string(),
   url: z.string(),
   relayUrl: z.string(),
   session: z.string().refine((value) => isGuid(value) && value.length === 36),
@@ -68,10 +70,24 @@ function parseAttachment(
     throw new Error("The API returned an invalid tunnel attachment.");
   const attachment = parsed.data;
   const returnedName = parseName(attachment.name);
+  parseRouteName(attachment.routeName);
   if (name && returnedName !== name)
     throw new Error("The API returned an attachment for a different tunnel.");
+  const suffix = name ? attachment.routeName.slice(name.length + 2) : "";
+  if (
+    name
+      ? !attachment.routeName.startsWith(`${name}--`) ||
+        suffix.length > 36 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(suffix) ||
+        suffix.includes("--")
+      : attachment.routeName !== returnedName
+  )
+    throw new Error("The API returned an invalid tunnel route name.");
   if (
     !publicUrl(attachment.url, protocol) ||
+    (protocol === "http" &&
+      parseUrl(attachment.url)?.hostname.split(".")[0] !==
+        attachment.routeName) ||
     !/^https:\/\/[^/@?#\\\p{Cc}\s]+\/?$/u.test(attachment.relayUrl) ||
     parseUrl(attachment.relayUrl)?.protocol !== "https:"
   )
@@ -103,8 +119,6 @@ export async function runTunnelCommand(
     if (action === "tcp" && !requestedName)
       throw new Error("TCP tunnels require --name.");
     const name = requestedName ? parseName(requestedName) : undefined;
-    if (name === "guest")
-      throw new Error("'guest' is reserved for anonymous publishing.");
     const target = parseTarget(raw, args.includes("--ipv6"), action);
     const ca = await upstreamTrust(target, optionValue(args, "--upstream-ca"));
     await publish(client, name, target, ca, options.json, signal);
@@ -173,7 +187,7 @@ async function publish(
   signal: AbortSignal,
 ): Promise<void> {
   const guest = name === undefined;
-  const path = `/${name ?? "guest"}/attachments`;
+  const path = name ? `/${name}/attachments` : "/attachments";
   const parameters = guest ? {} : { protocol: target.protocol };
   const request = async (previous?: Attachment) => {
     const api = await client(guest, signal);
@@ -278,6 +292,7 @@ async function resumeWithBackoff(
     }
     if (
       next.name !== previous.name ||
+      next.routeName !== previous.routeName ||
       next.url !== previous.url ||
       next.relayUrl !== previous.relayUrl ||
       sameGuid(next.session, previous.session) ||

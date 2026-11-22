@@ -15,6 +15,7 @@ vi.mock("ws", () => ({
 
 const attachment = {
   name: "sandbox",
+  routeName: "sandbox--example",
   url: "https://sandbox.public.example.test",
   relayUrl: "https://relay.example.test:8443/",
   session: "a563e5bb-e4b1-42b6-bf72-9b99a1bf6872",
@@ -40,7 +41,7 @@ it("uses the relay's WSS origin and sends only ticket, generation, and loopback 
   expect(fixtures.connect).toHaveBeenCalledOnce();
   const [url, options] = fixtures.connect.mock.calls[0]!;
   expect(String(url)).toBe(
-    "wss://relay.example.test:8443/v1/tunnels/sandbox/control",
+    "wss://relay.example.test:8443/v1/tunnels/sandbox--example/control",
   );
   expect(options).toMatchObject({
     headers: {
