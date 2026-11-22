@@ -19,7 +19,12 @@ export function resolveOperation(
   args: readonly string[],
 ): { operation: Operation; rest: string[] } | undefined {
   return commandOperations
-    .map((operation) => ({ operation, tokens: operation.command.split(" ") }))
+    .filter((operation) => operation.command)
+    .flatMap((operation) =>
+      operation.command
+        .split(" / ")
+        .map((command) => ({ operation, tokens: command.split(" ") })),
+    )
     .filter(({ tokens }) =>
       tokens.every((token, index) => args[index]?.toLowerCase() === token),
     )

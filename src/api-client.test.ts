@@ -16,9 +16,11 @@ afterEach(() => {
 });
 
 describe("BorealisApiClient", () => {
-  it("maps all thirteen first-party transport operations", () => {
+  it("maps all fifteen first-party transport operations", () => {
     expect(implementedTransportOperationIds).toEqual([
       "destructive.preflight.create",
+      "tunnel.guest.attach",
+      "tunnel.attachment.end",
       "sandbox.workspace.export.resource.create",
       "sandbox.workspace.export.resource.read",
       "sandbox.workspace.import.upload.create",

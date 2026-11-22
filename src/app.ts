@@ -6,7 +6,8 @@ import {
   ApiError,
   BorealisApiClient,
 } from "./api-client.js";
-import { deleteSession } from "./session-store.js";
+import { deleteSession, loadSession } from "./session-store.js";
+import { runTunnelCommand } from "./tunnels/command.js";
 import { login, resolveAccessToken } from "./auth.js";
 import { operations, runtimeLifecycleMappings } from "./catalog.js";
 import { completion } from "./completion.js";
@@ -220,6 +221,56 @@ async function runInternal(
   const profiles = new ProfileStore();
   const explicitlyCloud =
     cloudOptions || Boolean(process.env.BOREALIS_ACCESS_TOKEN);
+  if (command[0] === "tunnel") {
+    const selected = profileExplicit
+      ? options.profile
+      : await profiles.selected(signal);
+    if (selected) {
+      const target = await profiles.find(selected, signal);
+      if (!target) throw new Error(`Unknown Borealis profile '${selected}'.`);
+      if (target.type !== "cloud")
+        throw new UnsupportedTargetError(
+          `Tunnels require Borealis Cloud. Select a Cloud profile instead of ${targetLabel(selected, target)}.`,
+        );
+      options.profile = selected;
+    }
+
+    let connection:
+      { api: string; organization: string | undefined } | undefined;
+    return await runTunnelCommand(
+      command,
+      async (anonymous, requestSignal) => {
+        const auth = anonymous
+          ? undefined
+          : await resolveAccessToken(options, requestSignal);
+        const session =
+          anonymous && !apiExplicit
+            ? await loadSession(options.profile, requestSignal)
+            : auth?.session;
+        const api = resolveApiBase(options.api, session?.api, apiExplicit);
+        const organization = anonymous
+          ? undefined
+          : (options.organization ?? session?.organization);
+        if (
+          connection &&
+          (connection.api !== api || connection.organization !== organization)
+        )
+          throw new Error(
+            "The Borealis Cloud API or organization changed during the tunnel session.",
+          );
+        connection = { api, organization };
+        return new BorealisApiClient({
+          api,
+          ...(auth ? { token: auth.token } : {}),
+          ...(organization ? { organization } : {}),
+          ...(requestSignal ? { signal: requestSignal } : {}),
+        });
+      },
+      options,
+      confirm,
+      signal,
+    );
+  }
   if (
     command[0] === "profile" &&
     ["add", "list", "use"].includes(command[1] ?? "")

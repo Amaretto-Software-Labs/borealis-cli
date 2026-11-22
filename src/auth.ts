@@ -346,6 +346,15 @@ async function openBrowser(url: string): Promise<void> {
   await execFileAsync(executable, args, { windowsHide: true });
 }
 
+export class IdentityTokenError extends Error {
+  constructor(
+    readonly status: number,
+    message = `Token endpoint failed (${status}).`,
+  ) {
+    super(message);
+  }
+}
+
 async function requestToken(
   identity: string,
   body: URLSearchParams,
@@ -360,9 +369,11 @@ async function requestToken(
       redirect: "error",
       signal: deadline.signal,
     });
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new IdentityTokenError(response.status);
+    }
     const text = await readBoundedResponse(response, 65_536, deadline.signal);
-    if (!response.ok)
-      throw new Error(`Token endpoint failed (${response.status}).`);
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0];
     if (
       !mediaType ||
@@ -590,7 +601,17 @@ export async function resolveAccessToken(
       client_id: session.clientId,
     }),
     signal,
-  );
+  ).catch((error: unknown) => {
+    if (
+      error instanceof IdentityTokenError &&
+      [400, 401, 403].includes(error.status)
+    )
+      throw new IdentityTokenError(
+        error.status,
+        `Could not refresh profile '${options.profile}' (HTTP ${error.status}). Run 'borealis auth login --profile ${options.profile}'.`,
+      );
+    throw error;
+  });
   const updated: Session = {
     ...session,
     accessToken: refreshed.access_token,

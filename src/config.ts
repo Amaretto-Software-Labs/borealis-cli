@@ -11,6 +11,9 @@ const explicitPrivilegeScopes = new Set([
 ]);
 const publicOperationScopes = [
   ...new Set(operations.map(({ scope }) => scope)),
+  "borealis.tunnels.read",
+  "borealis.tunnels.publish",
+  "borealis.tunnels.manage",
 ];
 const allowedLoginScopes = new Set([
   ...protocolScopes,
