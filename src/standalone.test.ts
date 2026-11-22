@@ -650,7 +650,11 @@ describe.skipIf(process.platform === "win32")("standalone CLI", () => {
     expect(await run(["auth", "whoami", "--json"])).toBe(0);
     expect(readOutput()).toEqual({ userId: "cloud" });
     expect(cloud).toHaveBeenCalledOnce();
+    expect(await run(["--profile", "cloud", "vm", "list", "--json"])).toBe(0);
+    expect(cloud).toHaveBeenCalledTimes(2);
+    vi.stubEnv("BOREALIS_ACCESS_TOKEN", undefined);
     expect(await run(["--profile", "unregistered", "auth", "whoami"])).toBe(1);
+    vi.stubEnv("BOREALIS_ACCESS_TOKEN", "cloud-token");
     expect(
       await run([
         "profile",
@@ -666,7 +670,7 @@ describe.skipIf(process.platform === "win32")("standalone CLI", () => {
     stdout.mockClear();
     expect(await run(["profile", "list", "--json"])).toBe(0);
     expect(readOutput()).toMatchObject([{ name: "saved", selected: true }]);
-    expect(cloud).toHaveBeenCalledOnce();
+    expect(cloud).toHaveBeenCalledTimes(2);
     expect(host.requests).toHaveLength(0);
   });
 

@@ -321,7 +321,10 @@ async function runInternal(
     ? await profiles.find(selected, signal)
     : undefined;
   const cloud = selected
-    ? profileExplicit && Boolean(options.token || options.tokenFile)
+    ? profileExplicit &&
+      Boolean(
+        options.token || options.tokenFile || process.env.BOREALIS_ACCESS_TOKEN,
+      )
     : explicitlyCloud;
   const profile =
     registered ??
