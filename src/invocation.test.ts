@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Readable } from "node:stream";
 import { operations, conditionalOperationIds } from "./catalog.js";
+import { standaloneOperations } from "./standalone-catalog.js";
 import {
   prepareRequest,
   readBoundedSecretStdin,
@@ -107,6 +108,56 @@ describe("request preparation", () => {
         "--timeout=21601",
       ]),
     ).rejects.toThrow("integer from 1 to 21600");
+  });
+
+  it("allows the complete local image build window and preserves explicit and Cloud waits", async () => {
+    const observe = standaloneOperations.find(
+      ({ command }) => command === "operation wait",
+    )!;
+    const build = operation("runtime_image_build.create");
+    const create = operation("sandbox.create");
+    for (const [operation, args, expectedTimeout] of [
+      [build, ["--context", ".", "--dockerfile", "Dockerfile", "--wait"], 7350],
+      [create, ["--image", "ubuntu:24.04", "--wait"], 9150],
+      [create, ["--body", '{"image":"ubuntu:24.04"}', "--wait"], 9150],
+      [observe, ["existing-operation"], 9150],
+    ] as const) {
+      expect(
+        (await prepareRequest(operation, args, undefined, true))
+          .waitTimeoutSeconds,
+      ).toBe(expectedTimeout);
+      expect(
+        (
+          await prepareRequest(
+            operation,
+            [...args, "--timeout", "120"],
+            undefined,
+            true,
+          )
+        ).waitTimeoutSeconds,
+      ).toBe(120);
+      expect((await prepareRequest(operation, args)).waitTimeoutSeconds).toBe(
+        900,
+      );
+    }
+    expect(
+      (
+        await prepareRequest(
+          create,
+          ["--runtime-template", "base", "--template-revision", "1", "--wait"],
+          undefined,
+          true,
+        )
+      ).waitTimeoutSeconds,
+    ).toBe(900);
+    const exec = await prepareRequest(
+      operation("sandbox.exec.start"),
+      ["sandbox", "--command", "echo", "--timeout", "15"],
+      undefined,
+      true,
+    );
+    expect(exec.waitTimeoutSeconds).toBeUndefined();
+    expect(exec.body).toEqual({ command: "echo", timeoutSeconds: 15 });
   });
 
   it("derives preflight targets only from route identifiers", async () => {

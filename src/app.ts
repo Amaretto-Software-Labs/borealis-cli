@@ -8,11 +8,7 @@ import {
 } from "./api-client.js";
 import { deleteSession } from "./session-store.js";
 import { login, resolveAccessToken } from "./auth.js";
-import {
-  operations,
-  resolveOperation,
-  runtimeLifecycleMappings,
-} from "./catalog.js";
+import { operations, runtimeLifecycleMappings } from "./catalog.js";
 import { completion } from "./completion.js";
 import {
   createCommandGrammar,
@@ -20,9 +16,44 @@ import {
 } from "./command-grammar.js";
 import { defaults, validateOrigin } from "./config.js";
 import { writeCredentialFile } from "./credential-file.js";
-import { prepareRequest } from "./invocation.js";
+import { optionValue, prepareRequest } from "./invocation.js";
+import { runDirectCommand } from "./direct-command.js";
+import { helperCommands, HostUpdateObservationError } from "./host-helper.js";
+import { runLocalDoctor } from "./local-doctor.js";
+import {
+  discoverLocalProfile,
+  identifySupervisorUser,
+} from "./local-profile.js";
+import {
+  defaultSocket,
+  noTargetMessage,
+  ProfileStore,
+  targetLabel,
+} from "./profiles.js";
+import { helpExamples, resolvePublicOperation } from "./public-commands.js";
+import { bindNetworkGeneration } from "./public-network.js";
+import {
+  installSupervisor,
+  runHostCommand,
+  runProfileCommand,
+} from "./supervisor-commands.js";
+import { standaloneOperationIds } from "./standalone-catalog.js";
+import {
+  InterruptedObservationError,
+  reportBackgroundWork,
+  supervisorExitCode,
+  UnsupportedTargetError,
+  usesClientBuildInput,
+  waitForCloudImageBuild,
+} from "./supervisor-client.js";
+import { LocalSocketPermissionError } from "./supervisor-transport.js";
 import { attach } from "./interactive.js";
-import { writeResult } from "./output.js";
+import {
+  commandExitCode,
+  writeOperationResult,
+  writeResult,
+  writesExecutionStreams,
+} from "./output.js";
 import type { GlobalOptions } from "./types.js";
 
 const packageJson = createRequire(import.meta.url)("../package.json") as {
@@ -33,6 +64,8 @@ function parseGlobals(argv: readonly string[]): {
   options: GlobalOptions;
   command: string[];
   apiExplicit: boolean;
+  profileExplicit: boolean;
+  cloudOptions: boolean;
 } {
   const options: GlobalOptions = {
     api: defaults.api,
@@ -44,6 +77,8 @@ function parseGlobals(argv: readonly string[]): {
   };
   const command: string[] = [];
   let apiExplicit = false;
+  let profileExplicit = false;
+  let cloudOptions = false;
   const names = new Map<string, keyof GlobalOptions>([
     ["--api", "api"],
     ["--identity", "identity"],
@@ -68,12 +103,17 @@ function parseGlobals(argv: readonly string[]): {
       if (!next) throw new Error(`Missing value for ${value}.`);
       (options as unknown as Record<string, unknown>)[names.get(name)!] = next;
       if (name === "--api") apiExplicit = true;
+      if (name === "--profile") {
+        if (profileExplicit)
+          throw new Error("--profile may only be specified once.");
+        profileExplicit = true;
+      } else cloudOptions = true;
     }
   }
   options.api = validateOrigin(options.api, "API URL");
   options.identity = validateOrigin(options.identity, "Identity URL");
   options.app = validateOrigin(options.app, "Application URL");
-  return { options, command, apiExplicit };
+  return { options, command, apiExplicit, profileExplicit, cloudOptions };
 }
 
 export function resolveApiBase(
@@ -86,26 +126,6 @@ export function resolveApiBase(
       "An explicit API origin cannot reuse credentials from a different saved session. Supply an explicit token or log in to a separate profile for that API.",
     );
   return explicit ? configuredApi : (sessionApi ?? configuredApi);
-}
-
-function optionValue(
-  args: readonly string[],
-  option: string,
-): string | undefined {
-  let result: string | undefined;
-  for (let index = 0; index < args.length; index++) {
-    const current = args[index]!;
-    let value: string | undefined;
-    if (current === option) value = args[++index];
-    else if (current.startsWith(`${option}=`))
-      value = current.slice(option.length + 1);
-    else continue;
-    if (!value) throw new Error(`Missing value for ${option}.`);
-    if (result !== undefined)
-      throw new Error(`${option} may only be specified once.`);
-    result = value;
-  }
-  return result;
 }
 
 export function parseAuthLoginOptions(command: readonly string[]): {
@@ -164,30 +184,14 @@ function help(argv: readonly string[] = []): string {
     if (!child) break;
     node = child;
   }
-  if (node !== program) return node.helpInformation();
-
-  const groups = operations.reduce<Record<string, number>>(
-    (result, operation) => {
-      const group = operation.command.split(" ")[0]!;
-      result[group] = (result[group] ?? 0) + 1;
-      return result;
-    },
-    {},
+  const examples =
+    helpExamples[path.filter((token) => !token.startsWith("-")).join(" ")];
+  return (
+    node.helpInformation() +
+    (examples
+      ? `\nExamples\n${examples.map((example) => `  ${example}\n`).join("")}`
+      : "")
   );
-  const commandDescriptions: [string, string][] = Object.entries(groups).map(
-    ([group, count]) => [group, `${count} API operations`],
-  );
-  commandDescriptions.push(
-    ["auth", "login | logout | whoami"],
-    ["completion", "bash | fish | zsh"],
-    ["help", "Show command help"],
-    ["version", "Show the CLI version"],
-  );
-  const commands = commandDescriptions
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, description]) => `  ${name.padEnd(18)}${description}`)
-    .join("\n");
-  return `Borealis CLI\n\nUsage: borealis [global options] <command> [arguments] [options]\n\nGlobal options:\n  --api <origin>  --identity <origin>  --app <origin>\n  --profile <name>  --organization <id>  --token-file <path>\n  --json  --yes\n\nCommands:\n${commands}\n\nUse --set key=value or --body '{...}' for operation request fields. Path identifiers are positional.\n`;
 }
 
 async function runInternal(
@@ -195,7 +199,8 @@ async function runInternal(
   signal?: AbortSignal,
 ): Promise<number> {
   signal?.throwIfAborted();
-  const { options, command, apiExplicit } = parseGlobals(argv);
+  const { options, command, apiExplicit, profileExplicit, cloudOptions } =
+    parseGlobals(argv);
   if (command.length === 0 || ["help", "-h", "--help"].includes(command[0]!)) {
     process.stdout.write(help(argv));
     return 0;
@@ -212,15 +217,70 @@ async function runInternal(
     process.stdout.write(completion(command[1] ?? ""));
     return 0;
   }
+  const profiles = new ProfileStore();
+  const explicitlyCloud =
+    cloudOptions || Boolean(process.env.BOREALIS_ACCESS_TOKEN);
+  if (
+    command[0] === "profile" &&
+    ["add", "list", "use"].includes(command[1] ?? "")
+  ) {
+    if (profileExplicit || cloudOptions)
+      throw new Error(
+        "Profile configuration takes a positional profile name or uses 'profile list'.",
+      );
+    if (
+      command[1] === "list" &&
+      !explicitlyCloud &&
+      !(await profiles.selected(signal))
+    )
+      await discoverLocalProfile(profiles, signal);
+    return await runProfileCommand(profiles, command, options.json, signal);
+  }
+  if (command[0] === "supervisor" && command[1] === "install") {
+    if (cloudOptions)
+      throw new Error("Supervisor installation requires a direct host target.");
+    return await installSupervisor(
+      profiles,
+      options,
+      command,
+      profileExplicit,
+      confirm,
+      signal,
+    );
+  }
+  const cloudAuthentication =
+    command[0] === "auth" && ["login", "logout"].includes(command[1] ?? "");
+  const doctor = command[0] === "doctor";
+  const hostOverview = command[0] === "status";
+  const selected = profileExplicit
+    ? options.profile
+    : ((await profiles.selected(signal)) ??
+      (explicitlyCloud || cloudAuthentication || doctor || hostOverview
+        ? undefined
+        : await discoverLocalProfile(profiles, signal)));
   if (command[0] === "auth") {
+    const name = selected ?? "default";
+    const target = selected ? await profiles.find(selected, signal) : undefined;
+    if (target && target.type !== "cloud") {
+      if (command[1] === "whoami" && !cloudOptions) {
+        await identifySupervisorUser(name, target, options.json, signal);
+        return 0;
+      }
+      throw new UnsupportedTargetError(
+        `Cloud authentication is unavailable on ${targetLabel(name, target)}. Select a Cloud profile with --profile.`,
+      );
+    }
+    options.profile = name;
     if (command[1] === "login") {
       const loginOptions = parseAuthLoginOptions(command);
+      await profiles.add(name, { type: "cloud" }, signal);
       const session = await login(
         options,
         loginOptions.loginHint,
         loginOptions.scope,
         signal,
       );
+      await profiles.select(name, true, signal);
       writeResult(
         {
           authenticated: true,
@@ -239,18 +299,88 @@ async function runInternal(
       );
       return 0;
     }
-    if (command[1] === "whoami") {
-      command.splice(0, command.length, "context", "show");
-    } else throw new Error("auth requires login, whoami, or logout.");
+    if (command[1] !== "whoami")
+      throw new Error("auth requires login, whoami, or logout.");
   }
 
-  const resolved = resolveOperation(command);
-  if (!resolved) throw new Error(`Unknown command '${command.join(" ")}'.`);
+  const helper =
+    helperCommands[
+      command
+        .slice(
+          0,
+          ["cloud", "update", "config", "builder"].includes(command[1] ?? "")
+            ? 3
+            : 2,
+        )
+        .join(" ")
+    ];
+  const resolved = resolvePublicOperation(command);
+  if (!resolved && !helper)
+    throw new Error(`Unknown command '${command.join(" ")}'.`);
+  const profile = selected
+    ? await profiles.find(selected, signal)
+    : explicitlyCloud
+      ? ({ type: "cloud" } as const)
+      : doctor || hostOverview
+        ? ({ type: "local", socket: defaultSocket } as const)
+        : undefined;
+  if (!profile)
+    throw new Error(
+      selected
+        ? `Unknown Borealis profile '${selected}'. ${noTargetMessage}`
+        : noTargetMessage,
+    );
+  options.profile =
+    selected ?? (profile.type === "local" ? "local" : "default");
+  if (profile.type !== "cloud") {
+    if (cloudOptions)
+      throw new Error(
+        "Cloud origin, organization, and token flags cannot be used with a local or SSH supervisor profile.",
+      );
+    if (doctor && profile.type === "local")
+      return await runLocalDoctor(
+        resolved!.operation,
+        profile.socket,
+        options,
+        signal,
+      );
+    if (helper)
+      return await runHostCommand(
+        command,
+        options,
+        profile,
+        helper,
+        confirm,
+        signal,
+      );
+    return await runDirectCommand(
+      resolved!.operation,
+      resolved!.rest,
+      options,
+      profile,
+      confirm,
+      signal,
+    );
+  }
+  if (helper || standaloneOperationIds.has(resolved!.operation.operationId))
+    throw new UnsupportedTargetError(
+      `${resolved?.operation.command ?? command.join(" ")} requires a local or SSH supervisor profile.`,
+    );
+  if (!resolved) throw new Error("Select a direct supervisor profile.");
   const request = await prepareRequest(
     resolved.operation,
     resolved.rest,
     signal,
+    false,
+    true,
   );
+  if (
+    resolved.operation.operationId === "runtime_image_build.create" &&
+    usesClientBuildInput(request)
+  )
+    throw new UnsupportedTargetError(
+      "Client build inputs require a local or SSH supervisor profile.",
+    );
   const requestBody =
     request.body && typeof request.body === "object"
       ? (request.body as Record<string, unknown>)
@@ -301,6 +431,19 @@ async function runInternal(
     ...(organization ? { organization } : {}),
     ...(signal ? { signal } : {}),
   });
+  await bindNetworkGeneration(
+    client,
+    resolved.operation,
+    request,
+    resolved.rest,
+  );
+  if (
+    request.idempotencyKey &&
+    (options.json || !writesExecutionStreams(resolved.operation))
+  )
+    process.stderr.write(
+      `Request key ${request.idempotencyKey} on profile '${options.profile}'\n`,
+    );
   const cleanupClient = (): BorealisApiClient =>
     new BorealisApiClient({
       api,
@@ -326,13 +469,33 @@ async function runInternal(
       `Complete credential delivery in your browser: ${String(claimUri)}\n`,
     );
   }
-  if (request.waitTimeoutSeconds !== undefined)
-    result =
+  const isImageBuild = resolved.operation.operationId.startsWith(
+    "runtime_image_build.",
+  );
+  if (isImageBuild) {
+    const target = {
+      type: "cloud" as const,
+      ...(selected && { profile: selected }),
+    };
+    if (request.waitTimeoutSeconds !== undefined) {
+      result = await waitForCloudImageBuild(
+        client,
+        resolved.operation,
+        result,
+        target,
+        request,
+        signal,
+      );
+    } else reportBackgroundWork(resolved.operation, result, target, request);
+  } else if (request.waitTimeoutSeconds !== undefined) {
+    const runtimeLifecycle =
       /^(logical_machine|runtime_template)\./.test(
         resolved.operation.operationId,
-      ) || Boolean(runtimeLifecycleMappings[resolved.operation.operationId])
-        ? await client.waitForRuntime(result, request.waitTimeoutSeconds)
-        : await client.waitFor(result, request.waitTimeoutSeconds);
+      ) || Boolean(runtimeLifecycleMappings[resolved.operation.operationId]);
+    result = runtimeLifecycle
+      ? await client.waitForRuntime(result, request.waitTimeoutSeconds)
+      : await client.waitFor(result, request.waitTimeoutSeconds);
+  }
   if (
     resolved.operation.operationId === "organization.list" &&
     result &&
@@ -460,7 +623,11 @@ async function runInternal(
       result = redacted;
     }
   }
-  writeResult(result, options.json);
+  writeOperationResult(resolved.operation, result, options.json);
+  if (isImageBuild && request.waitTimeoutSeconds !== undefined)
+    return supervisorExitCode(result);
+  const exitCode = commandExitCode(resolved.operation, result);
+  if (exitCode !== undefined) return exitCode;
   if (
     (/^(logical_machine|runtime_template|managed_service|private_network)\./.test(
       resolved.operation.operationId,
@@ -503,22 +670,69 @@ export async function run(
     validateCommandGrammar(argv);
     return await runInternal(argv, signal);
   } catch (error) {
+    if (error instanceof HostUpdateObservationError) {
+      if (argv.includes("--json"))
+        writeResult(
+          {
+            error: "observation_interrupted",
+            profile: error.profile,
+            attemptId: error.attemptId,
+            message: error.message,
+          },
+          true,
+        );
+      else process.stderr.write(`${error.message}\n`);
+      return signal?.aborted ? 130 : 4;
+    }
+    if (
+      error instanceof InterruptedObservationError ||
+      error instanceof UnsupportedTargetError
+    ) {
+      if (argv.includes("--json"))
+        writeResult(
+          error instanceof InterruptedObservationError
+            ? {
+                error: "observation_interrupted",
+                target: error.target,
+                resource: error.resource,
+                message: error.message,
+              }
+            : { error: error.code, message: error.message },
+          true,
+        );
+      else
+        process.stderr.write(`${error.message}
+`);
+      return error instanceof InterruptedObservationError
+        ? signal?.aborted
+          ? 130
+          : 4
+        : 3;
+    }
     if (
       error instanceof AmbiguousDispatchError ||
       error instanceof AmbiguousAllocationCancellationError
     ) {
+      const message =
+        error instanceof AmbiguousDispatchError &&
+        /^(network |vm network )/.test(error.operationCommand)
+          ? `The network change may have been accepted. Check its result on the same profile with 'borealis network operation status ${error.idempotencyKey}'.`
+          : error.message;
       if (argv.includes("--json"))
         writeResult(
           {
             error: "ambiguous_outcome",
             ...(error instanceof AmbiguousAllocationCancellationError
               ? { requestId: error.requestId }
-              : { idempotencyKey: error.idempotencyKey }),
-            message: error.message,
+              : {
+                  idempotencyKey: error.idempotencyKey,
+                  ...(error.target ? { target: error.target } : {}),
+                }),
+            message,
           },
           true,
         );
-      else process.stderr.write(`${error.message}\n`);
+      else process.stderr.write(`${message}\n`);
       return signal?.aborted ? 130 : 4;
     }
     if (error instanceof AggregateError) {
@@ -530,7 +744,16 @@ export async function run(
         process.stderr.write(`${error.message}\n`);
       return 130;
     }
+    if (error instanceof LocalSocketPermissionError) {
+      const message = `${error.message} Run 'borealis doctor' to check this terminal's access.`;
+      if (argv.includes("--json"))
+        writeResult({ error: error.code, socket: error.socket, message }, true);
+      else process.stderr.write(`${message}\n`);
+      return 2;
+    }
     if (error instanceof ApiError) {
+      if (error.code && argv.includes("--json"))
+        writeResult({ error: error.code, message: error.message }, true);
       process.stderr.write(
         `${error.message}${error.traceId ? `\nTrace: ${error.traceId}` : ""}\n`,
       );

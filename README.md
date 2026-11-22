@@ -5,7 +5,7 @@
 
 # Borealis CLI
 
-The official, open-source command-line client for the versioned Borealis public API. The CLI is an ordinary Node.js package: there are no platform-specific executables to download or unpack.
+The official command-line client for Borealis Cloud and standalone Borealis supervisors. It is distributed as a Node.js package.
 
 Website: [borealishq.io](https://borealishq.io) · Built by [Amaretto Software Labs](https://amarettosoftware.com)
 
@@ -16,10 +16,197 @@ Node.js 22 or newer is required.
 ```bash
 npx @amaretto-software-labs/borealis-cli --help
 npm install --global @amaretto-software-labs/borealis-cli
-borealis auth login
 ```
 
-## Authentication
+Open a fresh interactive shell and run `borealis --version` to verify the command
+is on your `PATH`. If you installed a user-local launcher under
+`$HOME/.local/bin` and your shell cannot find it, add
+`export PATH="$HOME/.local/bin:$PATH"` to the startup file your interactive shell
+reads, such as `~/.bashrc` for a non-login Bash shell on WSL. Open a new shell and
+run `borealis --version` again.
+
+## Standalone runtime
+
+To install from a signed Linux/KVM host bundle, install Python 3 and a system copy
+of cosign.
+
+```bash
+borealis supervisor install --bundle /path/to/signed-bundle
+borealis status
+borealis doctor
+borealis vm create --name dev --image ubuntu:24.04 --wait
+borealis vm list
+```
+
+The CLI verifies the publisher and the bundle's file digests before running the
+installer under sudo. It shows the release and system changes before application.
+Add `--without-builder` for a host that will run prepared images. Host
+prerequisites and VM readiness are separate checks detailed by the installer.
+If the installer adds your user to the default `borealis` management group,
+run `newgrp borealis` or open a fresh login session so the terminal picks up
+the new group. This applies to existing WSL shells and SSH sessions too.
+Run `borealis doctor` to check the local service, socket access for this
+terminal, and builder health. It reports the local checks even if the API is
+unreachable. With an SSH profile, `doctor` checks the remote supervisor API.
+
+Run `borealis status` for the selected standalone host's health, capacity,
+running VMs, and active or recent image builds. Use `--profile NAME` to check
+another local or SSH host. `--json` includes inventory counts and indicates
+when part of the inventory could not be read or fit within the overview limits.
+
+For remote bootstrap, use
+`borealis --profile <ssh-profile> supervisor install --bundle /absolute/path`
+with the signed bundle staged on that host and authorized noninteractive sudo.
+
+A fresh installation selects the `local` profile. An existing selection survives
+installation. With a fresh CLI configuration, Borealis discovers and selects
+an installed supervisor on `/run/borealis/supervisor.sock`; no Cloud login is
+needed for local or SSH management. Run
+`borealis auth whoami` to see the local OS identity and the supervisor host ID.
+Run `borealis profile use local` to switch from another selected profile.
+For a supervisor on a custom socket, register the path before selecting it.
+
+```bash
+borealis profile add local --local --socket /path/to/supervisor.sock
+borealis profile use local
+```
+
+From a Linux or macOS client, add an OpenSSH profile. Configure the host alias
+and verify the host key through your usual SSH process first. The remote
+account needs permission to access the management socket.
+
+```bash
+borealis profile add lab --ssh lab-linux --socket /run/borealis/supervisor.sock
+borealis profile list
+borealis --profile lab vm list
+borealis profile use lab
+borealis vm list
+```
+
+`--profile` overrides the target for one command. Local and SSH calls use Unix
+sockets and OS permissions. Unavailable targets fail in place. The Cloud URL,
+organization and explicit token flags require a Cloud profile. Direct JSON
+results contain `target` with the host identity alongside `result`.
+
+### Build and manage microVMs
+
+```bash
+borealis image build --context . --dockerfile Dockerfile --wait
+borealis image build --image ubuntu:24.04 --wait
+borealis image list
+borealis image build list
+borealis image build status BUILD_ID --wait
+borealis operation wait OPERATION_ID
+```
+
+The CLI respects `.dockerignore` and Dockerfile-specific ignore files. Contexts
+contain regular files and directories and omit symlinks. `--archive` uploads a
+supported local container archive. Build inputs are streamed by SHA-256 over the
+selected socket, including when using an SSH profile. Configure private registry
+credentials through `image registry create --secret-file` or `--secret-stdin` and
+select a specific connection for a build with `--registry REGISTRY_ID`.
+
+`vm create --image` requests the native architecture and resolves the
+registry tag through the supervisor. Use a verified prepared revision with
+`--prepared-image IMAGE_ID --revision REVISION`. Long operations
+return an ID. Use `--wait` to see the current phase and elapsed time. The CLI
+prints periodic updates after it confirms the same phase is still reported.
+Local input preparation and upload report bytes as the CLI processes them.
+Press Ctrl+C to stop watching while the host retains accepted work. Reconnect
+with `operation wait OPERATION_ID` or `image build status BUILD_ID --wait` on
+the same profile.
+For an explicit snapshot policy, create with `--checkpoint-policy AgentTurn`
+and use `vm snapshot create --sandbox VM_ID --wait`. For a lost response, retain the
+reported `--idempotency-key` and original
+request on the original profile. Progress is written to stderr.
+Standalone image builds wait for up to 2 hours 2 minutes 30 seconds by default.
+Source-image creation and `operation wait` default to 2 hours 32 minutes
+30 seconds. Use `--timeout` to change the observation window.
+
+```bash
+borealis vm session create --sandbox VM_ID
+borealis vm session attach SESSION_ID
+borealis vm workspace export VM_ID ./workspace.tar
+borealis vm workspace import VM_ID ./workspace.tar --keep
+borealis --profile lab vm port register VM_ID --container-port 8080 --protocol tcp --forward
+```
+
+An SSH preview binds the client listener to loopback and stays open until the
+host registration expires or the command is interrupted.
+
+### Host configuration and service maintenance
+
+Run privileged local host commands in a Linux terminal where sudo can prompt
+for authorization. The CLI verifies the installed helper within that sudo
+invocation. SSH host maintenance requires noninteractive sudo on the target.
+
+`supervisor logs --limit 100` reads the selected host's bounded service journal.
+Use `supervisor events` for durable operation receipts.
+
+```bash
+borealis supervisor config show
+borealis supervisor config validate --file ./changes.json
+borealis supervisor stop --yes
+borealis supervisor config apply --file ./changes.json --revision CONFIG_REVISION --yes
+borealis supervisor start
+```
+
+Configuration changes support `maximumConcurrentPhysicalStarts`,
+`hostMemoryReserveMiB`, `minimumDiskFreeGiB` and `enableStageTimings`.
+Show and validate return the current revision and omit unrelated settings and
+secrets. Use the revision from validation when applying the change. Apply
+requires a verified idle stop. The next start loads the new configuration.
+
+Use `borealis supervisor builder install --yes` from the same stopped state
+to enable the builder shipped with the installed signed release, then start the
+supervisor. `borealis supervisor uninstall --yes` removes owned service
+definitions and release binaries after a verified idle stop. It retains
+configuration, trust, operation receipts, VM disks and checkpoints. The
+dedicated bridge and firewall rules remain in the running host until reboot,
+and the saved network configuration remains available for reinstall.
+If cleanup was interrupted after the installed helper became unavailable,
+run `borealis supervisor uninstall --bundle /path/to/original-bundle --yes`
+with the signed release recorded by the host. On SSH profiles that path is on
+the selected host.
+
+### Host updates
+
+Use a signed release bundle to plan an update and review its eligibility and
+workload checks.
+
+```bash
+borealis supervisor update check --bundle /path/to/next-bundle
+borealis supervisor update plan --bundle /path/to/next-bundle
+borealis supervisor update apply --bundle /path/to/next-bundle --plan-id PLAN_ID --wait
+borealis supervisor update status ATTEMPT_ID
+borealis supervisor repair
+```
+
+Apply requires explicit confirmation. The host runs the transition independently
+and retains its attempt status after the CLI disconnects. Use `repair --resume`
+only when the recorded phase supports resuming. With an SSH profile, pass the
+absolute path to a signed bundle already staged on that Linux host. Remote
+update and repair commands require authorization for the fixed sudo helper.
+
+### Optional Cloud attachment
+
+Create an enrollment in the existing Cloud host pool for the supervisor's host
+ID, available from `borealis supervisor status`. Supply the enrollment code by
+owner-only file or stdin.
+
+```bash
+borealis supervisor cloud connect --control-plane https://CONTROL_PLANE --enrollment-code-file ./code
+borealis supervisor cloud status
+borealis supervisor cloud disconnect --yes
+```
+
+Attachment defaults to observability. Use `--enable-control` for an explicitly
+authorized host with the existing Cloud runtime trust configured. A Control
+attachment must drain admitted commands, native owners and connected builds
+before the Host Agent stops. Local and SSH operations on the supervisor
+continue independently.
+
+## Cloud authentication
 
 Interactive login uses OAuth authorization code flow with S256 PKCE and refresh tokens:
 
@@ -38,52 +225,58 @@ borealis auth whoami
 borealis auth logout
 ```
 
-Named profiles are isolated with `--profile <name>`. Sessions use the native macOS Keychain, Linux Secret Service, or Windows DPAPI. Storage fails closed when no secure provider is available. Plaintext owner-only files require an explicit `BOREALIS_CLI_ALLOW_INSECURE_FILE_SESSION=1` opt-in.
+To add a Cloud profile when a local or SSH profile is selected, run `borealis --profile cloud auth login`, then `borealis profile use cloud` if you want to select it. Cloud sessions are isolated by profile. Sessions use the native macOS Keychain, Linux Secret Service, or Windows DPAPI. Storage fails closed when no secure provider is available. Plaintext owner-only files require an explicit `BOREALIS_CLI_ALLOW_INSECURE_FILE_SESSION=1` opt-in.
 
 Automation should use one of these sources:
 
 ```bash
-BOREALIS_ACCESS_TOKEN=... borealis context show --json
-borealis --token-file ./token sandbox list --json
+BOREALIS_ACCESS_TOKEN=... borealis auth whoami --json
+borealis --profile cloud --token-file ./token vm list --json
 ```
 
 `--token` remains available but prints a warning because command-line arguments may be visible in process listings and shell history. Only one token source may be supplied.
 
 ## Commands
 
-The public package exposes exactly the 85 active, customer-facing operations in the Borealis v1 catalog. Platform-administration operations are intentionally excluded. Run `borealis --help` for groups and use the canonical command paths, for example:
+The same vocabulary applies to local, SSH and Cloud targets. Run
+`borealis --help` for command groups, or `borealis vm create --help` and
+`borealis image build --help` for available options.
 
 ```bash
-borealis sandbox list --page 1 --page-size 50
-borealis sandbox get 018f4c28-dc05-7e91-9f8e-11e421bb8a91 --json
-borealis sandbox create --body '{"name":"demo","runtime":{"kind":"microvm","templateId":"base","templateRevision":1,"architecture":"aarch64"}}'
-borealis host list --pool 018f4c28-dc05-7e91-9f8e-11e421bb8a91
-borealis interactive attach 018f4c28-dc05-7e91-9f8e-11e421bb8a91
+borealis vm list
+borealis vm inspect VM_ID
+borealis vm exec VM_ID --command uname --arg=-m
+borealis vm stop VM_ID --wait
+borealis vm delete VM_ID --wait
+borealis image list
+borealis image build status BUILD_ID
+borealis --profile cloud network list
+borealis --profile cloud cloud host list --pool POOL_ID
 ```
 
-Sandbox creation follows the API's MicroVM default. To select a prepared ARM64
-image explicitly, use its immutable template revision:
+On a standalone host, `vm create --image` resolves and prepares an OCI source.
+Cloud VM creation instead uses a prepared image and its exact revision:
 
 ```bash
-borealis sandbox create \
+borealis --profile cloud vm create \
   --name isolated-build \
-  --runtime microvm \
-  --runtime-template ubuntu-24.04 \
-  --template-revision 3 \
-  --architecture aarch64 \
+  --prepared-image IMAGE_ID \
+  --revision REVISION \
+  --architecture x86_64 \
   --vcpu 2 \
   --memory-mib 4096 \
-  --root-disk 20
+  --root-disk-gib 20
 ```
 
-Path identifiers are positional. Request fields can use their named kebab-case option or the transport-neutral forms:
+Use `image prepare IMAGE_ID REVISION` on Cloud to stage a published image for
+its VM resource shape. Check the command's help for available options. Cloud
+source-image build and VM creation are separate operations; direct `--image`
+creation is supported by local and SSH supervisors.
 
-```bash
-borealis template create --set displayName=Node --set image=node:22
-borealis template create --body '{"displayName":"Node","defaults":{"name":"Node","image":"node:22"}}'
-```
-
-All commands support `--json`. JSON output preserves the public response. Human output is a presentation of the same response. A workspace import that reaches `failed` exits with code 3, including when `--wait` is used; its JSON result is still written to stdout.
+`--json` preserves the Cloud API response. Direct supervisor JSON includes the
+target and API result. Human output presents the same response. A failed
+workspace import exits with code 3, including when `--wait` is used; its JSON
+result is still written to stdout.
 
 ### Safety
 
@@ -93,6 +286,10 @@ All commands support `--json`. JSON output preserves the public response. Human 
 - Service-principal creation requires `--output <new-file>` or `--include-secret`. Output files are created owner-only and are never overwritten; failed delivery triggers compensating revocation.
 - API, Identity, and application origins must use HTTPS. Loopback HTTP is accepted for local development only.
 - Interactive session messages are capped at 4 MiB.
+
+`BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:standalone` checks CLI
+command mappings and representative request fields against a sibling checkout
+of the supervisor.
 
 ## Shell completion
 
@@ -115,10 +312,10 @@ pnpm build
 pnpm pack
 ```
 
-The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. In a Borealis source checkout, mechanically verify the 85 public commands against the canonical .NET catalog and client methods with:
+The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. Use the Borealis source checkout to verify the 86 public operations against the canonical .NET catalog and client methods.
 
 ```bash
-BOREALIS_SOURCE_ROOT=/path/to/aurora-proto pnpm parity
+BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity
 ```
 
 When validating a source revision that still contains the former .NET CLI, the same gate also proves its registry is a one-to-one match.
@@ -140,94 +337,19 @@ After that first interactive publish, configure the npm trusted publisher for `A
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-## Runtime v2
+## VM operations and image readiness
 
-The CLI includes 86 canonical customer operations plus 65 conditional runtime and networking commands. `logical-machine allocate` uses server-selected identity, including complete VM pools. Ordinary `sandbox create` follows the enabled API's MicroVM allocation default; explicit legacy container requests are rejected by the production API.
+Accepted operations and completed operations are distinct. Use `--wait` or
+`borealis operation wait OPERATION_ID` for a standalone operation; reconnect
+with its original identifier after an interruption. Keep the original
+idempotency key and request when recovering an ambiguous dispatch. A selected
+target that is unavailable fails without switching to another profile.
 
-Standard sandbox start/resume/stop/delete inspect the resource runtime kind and logical binding. Runtime v2 dispatch requires an explicit UUID key and uses the conditional logical-machine endpoint; existing containers retain their lifecycle during migration.
+For Cloud, prepare a published image for the intended resource shape before
+creating a VM. A stage result with zero ready hosts means preparation is still
+pending. Local checkpoints depend on the original host and disk; they are not
+off-host backups. See `borealis vm --help`, `borealis image --help`, and
+`borealis network --help` for the supported commands.
 
-Runtime v2 commands check `GET /api/v1/capabilities/runtime-v2` before dispatch. That response describes deployment support; normal organization, ownership, scope and preflight authorization still apply. Hosted MCP uses the same conditional catalogs, so disabled deployments do not advertise these tools.
-
-Provide an explicit UUID key for every keyed Runtime v2 mutation. Keep the same key and payload on retry. Turn renewal extends a bounded activity lease; template retirement reconciles the same revision target state and prevents new activations while existing machines retain their recovery baseline.
-
-```bash
-borealis logical-machine allocate --idempotency-key "$REQUEST_ID" --body '{"name":"worker","runtime":{"kind":"microvm","templateId":"base","templateRevision":1,"architecture":"aarch64","resources":{"vcpu":1,"memoryMiB":1024,"rootDiskGiB":2}}}'
-borealis logical-machine allocation by-request "$REQUEST_ID"
-borealis logical-machine get "$VM_ID"
-borealis logical-machine wake "$VM_ID" --idempotency-key "$WAKE_REQUEST_ID" --wait --timeout 60
-borealis logical-machine turn begin "$VM_ID" --idempotency-key "$TURN_REQUEST_ID" --set leaseSeconds=300
-borealis logical-machine turn renew "$VM_ID" "$TURN_ID" --set leaseSeconds=300
-borealis logical-machine turn complete "$VM_ID" "$TURN_ID" --idempotency-key "$COMPLETE_REQUEST_ID" --body '{"captureBoundaryId":"CAPTURE_UUID","outputWatermark":42}'
-borealis logical-machine operation get "$VM_ID" "$COMPLETE_REQUEST_ID"
-borealis runtime-template retire "$TEMPLATE_ID" "$REVISION"
-```
-
-Allocation, wake, start and template activation support bounded `--wait`; a committed wake establishes execution readiness. Only successful independently verified checkpoint commit establishes durable turn output. Suspended processes preserve local state but make no progress, and external connections may need reconnecting.
-
-Use `--json` for structured results. Exit codes are 0 for accepted/successful calls, 1 for input/local failures, 2 for authorization failures, 3 for API/terminal operation failures, 4 for ambiguous dispatch or `OutcomeUnknown`, and 130 for cancellation. Ambiguous JSON includes `idempotencyKey`; the CLI never silently resubmits. Recover a lost allocation response by its original request key, or query wake/operation/turn/checkpoint status with original identifiers. A successful acceptance without `--wait` does not claim final readiness. Deletion retains explicit confirmation and API-owned `sandbox.delete` preflight.
-
-An idle, paused VM can release its resident RAM while keeping its local checkpoint:
-
-```sh
-borealis logical-machine hibernate "$VM_ID" --idempotency-key "$HIBERNATE_REQUEST_ID"
-borealis logical-machine operation get "$VM_ID" "$HIBERNATE_REQUEST_ID"
-```
-
-The accepted response is pending work, not proof of hibernation. Wait for the operation to commit and the VM to reach `LocalDiskSuspended`; resume through the normal wake command. Reuse the same request ID after a timeout. Replaying a completed request after resume returns its original receipt without hibernating again. Active work must finish and the VM must be paused first. Local checkpoints depend on the original host and disk; they are not durable backups.
-
-`BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity` verifies the canonical customer catalog, and `pnpm parity:runtime` separately checks conditional catalog parity. Neither command builds another CLI in the backend repository.
-
-### Recover turn activity
-
-An expired turn activity can be recovered only for observing and settling its original execution. Preserve the original expired lease, incarnation, epoch and a fresh recovery request ID before dispatch:
-
-```sh
-borealis logical-machine turn activity recover "$VM_ID" "$TURN_ID" --idempotency-key "$RECOVERY_REQUEST_ID" --body '{"expectedActivityLeaseId":"OLD_LEASE_UUID","expectedIncarnationId":"INCARNATION_UUID","expectedOwnershipEpoch":2,"leaseSeconds":300}'
-borealis logical-machine turn activity recovery get "$VM_ID" "$TURN_ID" "$RECOVERY_REQUEST_ID"
-```
-
-After recovery, renewal and completion bodies must include `expectedActivityLeaseId` from that exact recovery receipt. A lost response requires receipt reconciliation with the original request ID; never adopt another request's lease or replay execution. Recovery preserves cancellation intent and the expired lease.
-
-### Contract parity
-
-`pnpm catalog:check` validates the 86 public and 63 conditional operations for unique commands, API paths and ownership. CI and release packaging run this check, the CLI tests, and the packed-package smoke test without private-source credentials.
-
-When updating the Borealis contracts, regenerate and compare both catalogs against the source checkout:
-
-```sh
-BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:update
-BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:runtime:update
-BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity
-BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity:runtime
-```
-
-Borealis CI runs both parity checks against the CLI revision under review, using its own source checkout. They compare API contracts and SDK methods; Git ancestry, commit provenance and private-source access from this public repository are not required. Squashing either PR does not change contract compatibility. npm publication retains its existing trusted-publishing configuration and package validation.
-
-### Prepare an image for a VM size
-
-Image build/import and VM creation are separate operations. Stage the published revision for the resource shape and target host pool before allocation:
-
-```sh
-borealis runtime-image template stage custom-image 1 --body '{"placement":{"hostPoolId":"HOST_POOL_UUID"},"resources":{"vcpu":2,"memoryMiB":4096,"rootDiskGiB":16}}'
-```
-
-A stage result with `readyHosts: 0` means preparation is pending; repeat the same stage request to observe progress. A ready host has prepared this exact template baseline. Images are staged on demand, not replicated to every host. Different VM sizes need separate preparation. A complete paused VM pool is additional, demand-driven capacity; image readiness alone does not promise a pool hit.
-
-### Managed sidecar image preparation
-
-`runtime-image build` accepts the published build request with `enableManagedService: true` for a service image whose original ENTRYPOINT/CMD runs only after authorized launch. `sourceKind: "container_archive"` uses the existing build-context upload's digest reference for a Docker-save or OCI archive. Raw VM disks are not container archives.
-
-Private OCI builds accept an explicit per-build `registryCredential` through the Borealis API and SDK. The CLI currently accepts build JSON only through command arguments; it has no private body-file or stdin input for these credentials. Use the SDK for private builds, and never place a token in `--body`, `--set`, or an image URL. Public pulls never borrow a saved organization registry credential. Keep request identity stable across transport retries; changing a credential does not replace an already accepted build or its immutable source.
-
-The existing build/get/approve/stage commands retain their operation identities. Wait for signed validation, any required operator approval and exact geometry staging before VM allocation. Acceptance is separate from image readiness and service readiness.
-
-### Computer durability
-
-Computer durability belongs to the VM, independently of task retention. New MicroVMs default to ephemeral (no automatic snapshots). Change an existing computer with a stable request key and inspect protection while the first permanent checkpoint is published:
-
-```bash
-borealis logical-machine durability change "$VM_ID" --idempotency-key "$REQUEST_ID" --body '{"mode":"permanent"}'
-borealis logical-machine durability get "$VM_ID"
-```
-
-Use `{"mode":"ephemeral"}` to stop future automatic checkpoints without replacing the computer. Promotion remains pending until the first fresh durable checkpoint; a permanent computer recovers through its last committed checkpoint.
+`BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity` and `pnpm parity:runtime`
+check the CLI's internal operation contracts against the source checkout.

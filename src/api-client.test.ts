@@ -315,10 +315,11 @@ describe("BorealisApiClient", () => {
   });
 
   it("preflights destructive requests and binds the returned token", async () => {
+    const sandboxId = "a975528f-ea5f-42a7-a568-5e7cc19e03ee";
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response('{"runtimeKind":"container"}', {
+        new Response(JSON.stringify({ sandboxId, runtimeKind: "container" }), {
           headers: { "content-type": "application/json" },
         }),
       )
@@ -338,13 +339,13 @@ describe("BorealisApiClient", () => {
       (candidate) => candidate.operationId === "sandbox.delete",
     )!;
     const result = await client.invoke(operation, {
-      path: "/api/v1/sandboxes/sandbox-1",
+      path: `/api/v1/sandboxes/${sandboxId}`,
       query: new URLSearchParams(),
     });
     expect(result).toEqual({ accepted: true });
     expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({
       operationId: "sandbox.delete",
-      target: { sandboxId: "sandbox-1" },
+      target: { sandboxId },
     });
     expect(fetchMock.mock.calls[2]![1].headers).toMatchObject({
       "x-borealis-preflight": "proof",

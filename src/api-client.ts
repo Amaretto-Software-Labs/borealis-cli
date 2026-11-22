@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isGuid, sameGuid } from "./guid.js";
-import { createReadStream, createWriteStream } from "node:fs";
+import { constants, createReadStream, createWriteStream } from "node:fs";
 import { link, mkdtemp, open, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -37,6 +38,7 @@ export class ApiError extends Error {
     readonly status: number,
     message: string,
     readonly traceId?: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -45,11 +47,18 @@ export class ApiError extends Error {
 export class AmbiguousDispatchError extends Error {
   constructor(
     readonly idempotencyKey: string,
-    operationCommand: string,
+    readonly operationCommand: string,
     options: ErrorOptions,
+    readonly target?: {
+      profile: string;
+      type: "local" | "ssh";
+      hostId: string;
+      socket: string;
+      alias?: string;
+    },
   ) {
     super(
-      `${operationCommand} may have been accepted, but its result is unknown. Retry with --idempotency-key ${idempotencyKey}.`,
+      `${operationCommand} may have been accepted, but its result is unknown. Retry ${target ? `with --profile ${target.profile} and` : "with"} --idempotency-key ${idempotencyKey}.`,
       options,
     );
   }
@@ -69,7 +78,9 @@ export class AmbiguousAllocationCancellationError extends Error {
 
 export interface ClientOptions {
   api: string;
-  token: string;
+  token?: string;
+  transport?: typeof fetch;
+  standalone?: boolean;
   organization?: string;
   signal?: AbortSignal;
   requestTimeoutMs?: number;
@@ -102,7 +113,7 @@ async function boundedBytes(
   return new Uint8Array(Buffer.concat(chunks));
 }
 
-async function boundedText(
+export async function boundedText(
   response: Response,
   limit = 10 * 1024 * 1024,
   signal?: AbortSignal,
@@ -153,7 +164,9 @@ export class BorealisApiClient {
 
   private headers(request?: PreparedRequest): Record<string, string> {
     return {
-      authorization: `Bearer ${this.options.token}`,
+      ...(this.options.token
+        ? { authorization: `Bearer ${this.options.token}` }
+        : {}),
       accept: "application/json",
       "user-agent": `borealis-cli/${process.env.npm_package_version ?? "0.1.0"}`,
       ...(this.options.organization
@@ -169,8 +182,12 @@ export class BorealisApiClient {
     operation: Operation,
     request: PreparedRequest,
   ): Promise<unknown> {
-    const runtimeId = runtimeLifecycleMappings[operation.operationId];
+    const runtimeId = this.options.standalone
+      ? undefined
+      : runtimeLifecycleMappings[operation.operationId];
     if (runtimeId) {
+      const machineId = request.path.match(/\/sandboxes\/([^/]+)/)?.[1];
+      if (!machineId) throw new Error("Invalid VM lifecycle target.");
       const sandbox = (await this.send(
         "GET",
         request.path.replace(/\/(start|stop|resume)$/, ""),
@@ -178,18 +195,17 @@ export class BorealisApiClient {
       )) as Record<string, unknown>;
       if (
         !sandbox ||
+        !sameGuid(sandbox.sandboxId, machineId) ||
         !["container", "microvm"].includes(String(sandbox.runtimeKind))
       )
         throw new Error(
-          "Cannot establish the sandbox runtime kind; inspect sandbox get before dispatch.",
+          "Could not verify the VM identity and runtime. Run 'borealis vm inspect' before retrying.",
         );
       if (sandbox.runtimeKind === "microvm") {
         if (!request.idempotencyKey || !isGuid(request.idempotencyKey))
           throw new Error(
             `${operation.command} on Runtime v2 requires an explicit UUID --idempotency-key; retain it for recovery.`,
           );
-        const machineId = request.path.match(/\/sandboxes\/([^/]+)/)?.[1];
-        if (!machineId) throw new Error("Invalid sandbox lifecycle target.");
         const logical = (await this.send(
           "GET",
           `/api/v1/sandboxes/${machineId}/runtime`,
@@ -206,13 +222,19 @@ export class BorealisApiClient {
         const mapped = operations.find(
           (candidate) => candidate.operationId === runtimeId,
         )!;
-        return await this.invoke(mapped, {
-          ...request,
-          path: mapped.path.replace("{sandboxId}", machineId),
-        });
+        return await this.invoke(
+          { ...mapped, command: operation.command },
+          {
+            ...request,
+            path: mapped.path.replace("{sandboxId}", machineId),
+          },
+        );
       }
     }
-    if (conditionalOperationIds.has(operation.operationId)) {
+    if (
+      !this.options.standalone &&
+      conditionalOperationIds.has(operation.operationId)
+    ) {
       const discovery = await this.runtimeCapabilities();
       if (
         !discovery.enabled ||
@@ -227,9 +249,12 @@ export class BorealisApiClient {
       return await this.invokeCore(operation, request);
     } catch (error) {
       if (
-        operation.idempotency === "idempotency-key" &&
+        (operation.idempotency === "idempotency-key" ||
+          this.options.standalone) &&
+        !(this.options.standalone && operation.risk === "destructive") &&
         request.idempotencyKey &&
-        isAmbiguousDispatchFailure(error)
+        (isAmbiguousDispatchFailure(error) ||
+          (this.options.standalone && error instanceof SyntaxError))
       )
         throw new AmbiguousDispatchError(
           request.idempotencyKey,
@@ -322,7 +347,9 @@ export class BorealisApiClient {
       return await this.exportWorkspace(request);
     }
     if (operation.operationId === "sandbox.workspace.import") {
-      return await this.importWorkspace(request);
+      return this.options.standalone
+        ? await this.importDirectWorkspace(request)
+        : await this.importWorkspace(request);
     }
     const headers = this.headers(request);
     if (operation.risk === "destructive") {
@@ -350,6 +377,18 @@ export class BorealisApiClient {
     try {
       result = await this.send(operation.method, path, headers, request.body);
     } catch (error) {
+      if (
+        this.options.standalone &&
+        operation.risk === "destructive" &&
+        request.idempotencyKey &&
+        (isAmbiguousDispatchFailure(error) || error instanceof SyntaxError)
+      ) {
+        throw new AmbiguousDispatchError(
+          request.idempotencyKey,
+          operation.command,
+          { cause: error },
+        );
+      }
       // Preflight has succeeded; only the dispatched DELETE can have an
       // uncertain outcome. Its recovery identity is the original allocation.
       if (
@@ -362,7 +401,10 @@ export class BorealisApiClient {
         );
       throw error;
     }
-    if (conditionalOperationIds.has(operation.operationId))
+    if (
+      !this.options.standalone &&
+      conditionalOperationIds.has(operation.operationId)
+    )
       validateRuntimeResult(operation, request, result);
     return result;
   }
@@ -433,7 +475,7 @@ export class BorealisApiClient {
         );
     }
     throw new Error(
-      `Runtime v2 wait timed out; reconcile logical-machine wake get ${wake.sandboxId} ${wake.requestId}.`,
+      `Waiting for the VM timed out. Check progress with 'borealis vm resume status ${wake.sandboxId} ${wake.requestId}'.`,
     );
   }
 
@@ -521,6 +563,11 @@ export class BorealisApiClient {
   private async exportWorkspace(request: PreparedRequest): Promise<unknown> {
     if (!request.output)
       throw new Error("Workspace export requires an output path or '-'.");
+    if (this.options.standalone)
+      return await this.downloadWorkspace(
+        new URL(request.path, this.options.api),
+        request.output,
+      );
     const key = request.idempotencyKey ?? randomUUID();
     const resource = (await this.send(
       "POST",
@@ -564,6 +611,14 @@ export class BorealisApiClient {
         "The API returned an invalid authenticated workspace export handle.",
       );
     }
+    return await this.downloadWorkspace(resourceUrl, request.output, resource);
+  }
+
+  private async downloadWorkspace(
+    resourceUrl: URL,
+    output: string,
+    resource?: { contentLength?: number | null; sha256?: string | null },
+  ): Promise<unknown> {
     const inactivity = new AbortController();
     const streamSignal = this.options.signal
       ? AbortSignal.any([this.options.signal, inactivity.signal])
@@ -574,7 +629,7 @@ export class BorealisApiClient {
     );
     let response: Response;
     try {
-      response = await fetch(resourceUrl, {
+      response = await (this.options.transport ?? fetch)(resourceUrl, {
         headers: this.headers(),
         redirect: "error",
         signal: deadline.signal,
@@ -592,6 +647,27 @@ export class BorealisApiClient {
       "application/x-tar"
     ) {
       throw new Error("Workspace export returned an unexpected content type.");
+    }
+    const rawLength = response.headers.get("content-length");
+    const contentLength =
+      resource?.contentLength ??
+      (this.options.standalone && rawLength !== null
+        ? Number(rawLength)
+        : undefined);
+    const sha256 =
+      resource?.sha256 ??
+      (this.options.standalone
+        ? response.headers.get("x-borealis-workspace-sha256")
+        : undefined);
+    if (
+      (contentLength != null &&
+        (!Number.isSafeInteger(contentLength) ||
+          contentLength < 0 ||
+          contentLength > 100 * 1024 * 1024 * 1024)) ||
+      (sha256 != null && !/^[0-9a-f]{64}$/i.test(sha256))
+    ) {
+      await response.body?.cancel();
+      throw new Error("Workspace export returned invalid integrity metadata.");
     }
     const temporaryDirectory = await mkdtemp(
       join(tmpdir(), "borealis-export-"),
@@ -635,23 +711,131 @@ export class BorealisApiClient {
         void reader.cancel().catch(() => undefined);
         await stagedFile.close();
       }
-      if (resource.contentLength != null && bytes !== resource.contentLength)
+      if (contentLength != null && bytes !== contentLength)
         throw new Error("Workspace export length did not match its handle.");
       const digest = hash.digest("hex");
-      if (
-        resource.sha256 != null &&
-        digest.toLowerCase() !== resource.sha256.toLowerCase()
-      )
+      if (sha256 != null && digest.toLowerCase() !== sha256.toLowerCase())
         throw new Error("Workspace export SHA-256 did not match its handle.");
-      await publishStagedWorkspaceExport(
-        staged,
-        request.output,
-        this.options.signal,
-      );
-      return { output: request.output, bytes, sha256: digest };
+      await publishStagedWorkspaceExport(staged, output, this.options.signal);
+      return { output, bytes, sha256: digest };
     } finally {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  }
+
+  private async importDirectWorkspace(
+    request: PreparedRequest,
+  ): Promise<unknown> {
+    const { archivePath, clearWorkspace } = (request.body ?? {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof archivePath !== "string" || archivePath === "-")
+      throw new Error(
+        "Workspace import requires a seekable local tar archive.",
+      );
+    const handle = await open(
+      archivePath,
+      constants.O_RDONLY | constants.O_NONBLOCK,
+    );
+    try {
+      const metadata = await handle.stat();
+      if (
+        !metadata.isFile() ||
+        metadata.size < 1 ||
+        metadata.size > 100 * 1024 * 1024 * 1024
+      )
+        throw new Error(
+          "Workspace archive must be a nonempty regular file up to 100 GiB.",
+        );
+      const archiveHash = createHash("sha256");
+      for await (const chunk of handle.createReadStream({
+        start: 0,
+        autoClose: false,
+        ...(this.options.signal ? { signal: this.options.signal } : {}),
+      }))
+        archiveHash.update(chunk as Buffer);
+      const current = await handle.stat();
+      if (
+        current.size !== metadata.size ||
+        current.mtimeMs !== metadata.mtimeMs ||
+        current.ctimeMs !== metadata.ctimeMs
+      )
+        throw new Error(
+          "Workspace archive changed while computing its SHA-256.",
+        );
+      return await this.dispatchWorkspaceImport(
+        request,
+        handle,
+        metadata.size,
+        archiveHash.digest("hex"),
+        clearWorkspace === false,
+      );
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async dispatchWorkspaceImport(
+    request: PreparedRequest,
+    handle: Awaited<ReturnType<typeof open>>,
+    length: number,
+    digest: string,
+    keep: boolean,
+  ): Promise<unknown> {
+    if (!request.idempotencyKey)
+      throw new Error("Workspace import requires an idempotency key.");
+    const operation = operations.find(
+      ({ operationId }) => operationId === "sandbox.workspace.import",
+    )!;
+    const headers = this.headers(request);
+    const preflight = (await this.send("POST", "/api/v1/preflights", headers, {
+      operationId: operation.operationId,
+      target: targetFromPath(operation, request.path),
+    })) as { preflightToken?: string };
+    if (!preflight.preflightToken)
+      throw new Error(
+        "The supervisor returned an invalid workspace preflight.",
+      );
+    const deadline = createRequestDeadline(this.options.signal, 7_200_000);
+    const stream = handle.createReadStream({
+      start: 0,
+      end: length - 1,
+      autoClose: false,
+      signal: deadline.signal,
+    });
+    try {
+      const init: RequestInit & { duplex: "half" } = {
+        method: "POST",
+        headers: {
+          ...headers,
+          "x-borealis-preflight": preflight.preflightToken,
+          "content-type": "application/x-tar",
+          "content-length": String(length),
+          "x-borealis-content-sha256": digest,
+        },
+        body: Readable.toWeb(stream) as unknown as BodyInit,
+        redirect: "error",
+        duplex: "half",
+        signal: deadline.signal,
+      };
+      const response = await (this.options.transport ?? fetch)(
+        new URL(`${request.path}?keep=${keep}`, this.options.api),
+        init,
+      );
+      return await this.readResponse(response, deadline.signal);
+    } catch (error) {
+      if (isAmbiguousDispatchFailure(error) || error instanceof SyntaxError)
+        throw new AmbiguousDispatchError(
+          request.idempotencyKey,
+          operation.command,
+          { cause: error },
+        );
+      throw error;
+    } finally {
+      deadline.dispose();
+      stream.destroy();
     }
   }
 
@@ -766,7 +950,7 @@ export class BorealisApiClient {
             let response: Response;
             let responseText: string;
             try {
-              response = await fetch(uploadUrl, {
+              response = await (this.options.transport ?? fetch)(uploadUrl, {
                 method: "PUT",
                 headers: {
                   ...this.headers(),
@@ -867,11 +1051,14 @@ export class BorealisApiClient {
     let statusResponse: Response;
     let statusText: string;
     try {
-      statusResponse = await fetch(`${uploadUrl}/status`, {
-        headers: this.headers(),
-        redirect: "error",
-        signal: deadline.signal,
-      });
+      statusResponse = await (this.options.transport ?? fetch)(
+        `${uploadUrl}/status`,
+        {
+          headers: this.headers(),
+          redirect: "error",
+          signal: deadline.signal,
+        },
+      );
       if (!statusResponse.ok)
         throw new ApiError(
           statusResponse.status,
@@ -913,6 +1100,27 @@ export class BorealisApiClient {
     return status;
   }
 
+  async supervisorRequest(
+    method: "GET" | "POST",
+    path: string,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    if (!this.options.standalone)
+      throw new Error("Supervisor API requires a direct profile.");
+    return await this.send(method, path, this.headers(), undefined, timeoutMs);
+  }
+
+  async readImageBuild(buildId: string, timeoutMs: number): Promise<unknown> {
+    if (!isGuid(buildId)) throw new Error("Invalid image build ID.");
+    return await this.send(
+      "GET",
+      `/api/v1/runtime-image-builds/${buildId}`,
+      this.headers(),
+      undefined,
+      timeoutMs,
+    );
+  }
+
   private async send(
     method: string,
     path: string,
@@ -922,50 +1130,64 @@ export class BorealisApiClient {
   ): Promise<unknown> {
     const deadline = createRequestDeadline(this.options.signal, timeoutMs);
     try {
-      const response = await fetch(new URL(path, this.options.api), {
-        method,
-        headers: {
-          ...headers,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+      const response = await (this.options.transport ?? fetch)(
+        new URL(path, this.options.api),
+        {
+          method,
+          headers: {
+            ...headers,
+            ...(body === undefined
+              ? {}
+              : { "content-type": "application/json" }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          redirect: "error",
+          signal: deadline.signal,
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        redirect: "error",
-        signal: deadline.signal,
-      });
-      if (!response.ok) {
-        const text = await boundedText(response, 1024 * 1024, deadline.signal);
-        let message = `Borealis API request failed (${response.status}).`;
-        let traceId: string | undefined;
-        try {
-          const problem = JSON.parse(text) as {
-            title?: string;
-            detail?: string;
-            traceId?: string;
-          };
-          message = problem.detail ?? problem.title ?? message;
-          traceId = problem.traceId;
-        } catch {
-          /* use the stable status message */
-        }
-        throw new ApiError(response.status, message, traceId);
-      }
-      if (response.status === 204) return { success: true };
-      const mediaType = response.headers.get("content-type") ?? "";
-      if (mediaType.includes("application/json") || mediaType.includes("+json"))
-        return JSON.parse(
-          await boundedText(response, undefined, deadline.signal),
-        );
-      const bytes = await boundedBytes(
-        response,
-        10 * 1024 * 1024,
-        deadline.signal,
       );
-      if (response.status === 202 && bytes.byteLength === 0)
-        return { accepted: true };
-      return bytes;
+      return await this.readResponse(response, deadline.signal);
     } finally {
       deadline.dispose();
     }
+  }
+
+  private async readResponse(
+    response: Response,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (!response.ok) {
+      const text = await boundedText(response, 1024 * 1024, signal);
+      let message = `Borealis API request failed (${response.status}).`;
+      let traceId: string | undefined;
+      let code: string | undefined;
+      try {
+        const problem = JSON.parse(text) as {
+          title?: string;
+          detail?: string;
+          message?: string;
+          traceId?: string;
+          code?: string;
+        };
+        message =
+          problem.detail ??
+          (this.options.standalone ? problem.message : undefined) ??
+          problem.title ??
+          message;
+        traceId = problem.traceId;
+        code = this.options.standalone ? problem.code : undefined;
+      } catch {
+        /* use the stable status message */
+      }
+      throw new ApiError(response.status, message, traceId, code);
+    }
+    if (response.status === 204) return { success: true };
+    const mediaType = response.headers.get("content-type") ?? "";
+    if (mediaType.includes("application/json") || mediaType.includes("+json"))
+      return JSON.parse(await boundedText(response, undefined, signal));
+    const bytes = await boundedBytes(response, 10 * 1024 * 1024, signal);
+    if (response.status === 202 && bytes.byteLength === 0)
+      return { accepted: true };
+    return bytes;
   }
 }
 
