@@ -621,6 +621,27 @@ describe.skipIf(process.platform === "win32")("standalone CLI", () => {
     expect(host.requests).toHaveLength(0);
   });
 
+  it("uses an explicit token file for a fresh named Cloud profile", async () => {
+    const host = await serve("auto", [], () => ({}));
+    const tokenFile = join(root, "token");
+    await writeFile(tokenFile, "test-access-token", { mode: 0o600 });
+    const cloud = vi.fn(async () => Response.json({ items: [] }));
+    vi.stubGlobal("fetch", cloud);
+    expect(
+      await run([
+        "--profile",
+        "cloud",
+        "--token-file",
+        tokenFile,
+        "vm",
+        "list",
+        "--json",
+      ]),
+    ).toBe(0);
+    expect(cloud).toHaveBeenCalledOnce();
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("preserves explicit Cloud auth and never replaces an existing or unknown selection", async () => {
     const host = await serve("auto", [], () => ({}));
     const cloud = vi.fn(async () => Response.json({ userId: "cloud" }));

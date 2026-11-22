@@ -317,13 +317,19 @@ async function runInternal(
   const resolved = resolvePublicOperation(command);
   if (!resolved && !helper)
     throw new Error(`Unknown command '${command.join(" ")}'.`);
-  const profile = selected
+  const registered = selected
     ? await profiles.find(selected, signal)
-    : explicitlyCloud
+    : undefined;
+  const cloud = selected
+    ? profileExplicit && Boolean(options.token || options.tokenFile)
+    : explicitlyCloud;
+  const profile =
+    registered ??
+    (cloud
       ? ({ type: "cloud" } as const)
-      : doctor || hostOverview
+      : !selected && (doctor || hostOverview)
         ? ({ type: "local", socket: defaultSocket } as const)
-        : undefined;
+        : undefined);
   if (!profile)
     throw new Error(
       selected

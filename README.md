@@ -25,6 +25,9 @@ is on your `PATH`. If you installed a user-local launcher under
 reads, such as `~/.bashrc` for a non-login Bash shell on WSL. Open a new shell and
 run `borealis --version` again.
 
+The standalone CLI also changes the Cloud command names. Update scripts that use
+`sandbox list` to `vm list`. Use `borealis --help` for the current command names.
+
 ## Standalone runtime
 
 To install from a signed Linux/KVM host bundle, install Python 3 and a system copy
