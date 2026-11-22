@@ -20,9 +20,11 @@ vi.mock("./host-helper.js", async (importOriginal) => ({
   invokeHostHelper,
 }));
 const loadSession = vi.hoisted(() => vi.fn());
+const deleteSession = vi.hoisted(() => vi.fn());
 vi.mock("./session-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./session-store.js")>()),
   loadSession,
+  deleteSession,
 }));
 const login = vi.hoisted(() => vi.fn());
 vi.mock("./auth.js", async (importOriginal) => ({
@@ -604,6 +606,7 @@ describe.skipIf(process.platform === "win32")("standalone CLI", () => {
     const host = await serve("auto", [], () => ({}));
     login.mockResolvedValue({ expiresAt: 123 });
     expect(await run(["auth", "logout", "--json"])).toBe(0);
+    expect(deleteSession).toHaveBeenCalledWith("default", undefined);
     expect(readOutput()).toMatchObject({
       authenticated: false,
       profile: "default",
