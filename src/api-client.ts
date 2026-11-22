@@ -19,6 +19,8 @@ import { createRequestDeadline } from "./http-timeout.js";
 
 export const implementedTransportOperationIds = Object.freeze([
   "destructive.preflight.create",
+  "tunnel.guest.attach",
+  "tunnel.attachment.end",
   "sandbox.workspace.export.resource.create",
   "sandbox.workspace.export.resource.read",
   "sandbox.workspace.import.upload.create",

@@ -23,7 +23,7 @@ const registrySource = resolve(
 const destination = resolve(import.meta.dirname, "../src/operations.json");
 const text = await readFile(source, "utf8");
 const expression =
-  /Op\("([^"]+)",\s*"([A-Z]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\)/g;
+  /Op\("([^"]+)",\s*"([A-Z]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]*)",\s*(?:"([^"]+)"|null)\)/g;
 const allOperations = [...text.matchAll(expression)].map((match) => ({
   operationId: match[1],
   method: match[2],
@@ -32,7 +32,7 @@ const allOperations = [...text.matchAll(expression)].map((match) => ({
   risk: match[5],
   clientMethod: match[6],
   command: match[7],
-  mcpName: match[8],
+  mcpName: match[8] ?? null,
 }));
 const operations = allOperations.filter(
   (operation) => !operation.operationId.startsWith("admin."),
@@ -72,9 +72,9 @@ for (const operation of operations) {
   operation.requiresPreflight = operation.risk === "destructive";
 }
 
-if (allOperations.length !== 116 || operations.length !== 86) {
+if (allOperations.length !== 121 || operations.length !== 91) {
   throw new Error(
-    `Expected 116 canonical and 86 public non-admin operations; parsed ${allOperations.length} and ${operations.length}.`,
+    `Expected 121 canonical and 91 public non-admin operations; parsed ${allOperations.length} and ${operations.length}.`,
   );
 }
 const [registry, client, typescriptClient, typescriptClientTests] =
@@ -165,6 +165,7 @@ const sdkOnlyTransportIds = new Set([
   "runtime_image_context.upload",
   "runtime_image_template.artifact",
   "runtime_image_template.artifact.head",
+  "tunnel.capabilities",
 ]);
 const implementedSection = typescriptClient.match(
   /implementedTransportOperationIds = Object\.freeze\(\[(.*?)\] as const\)/s,

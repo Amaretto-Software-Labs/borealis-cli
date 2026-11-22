@@ -353,7 +353,7 @@ pnpm build
 pnpm pack
 ```
 
-The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. Use the Borealis source checkout to verify the 86 public operations against the canonical .NET catalog and client methods.
+The checked-in `src/operations.json` is imported from `Borealis.Api.Contracts.V1.BorealisOperationCatalog`. Use the Borealis source checkout to verify the 91 public operations against the canonical .NET catalog and client methods.
 
 ```bash
 BOREALIS_SOURCE_ROOT=/path/to/borealis pnpm parity

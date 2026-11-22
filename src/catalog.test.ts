@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { operations, resolveOperation } from "./catalog.js";
 
 describe("public operation catalog", () => {
-  it("contains 86 base and 65 conditional Runtime v2 operations", () => {
-    expect(operations).toHaveLength(151);
+  it("contains 91 base and 65 conditional Runtime v2 operations", () => {
+    expect(operations).toHaveLength(156);
     expect(
       operations.some((operation) =>
         operation.operationId.startsWith("admin."),
@@ -11,10 +11,12 @@ describe("public operation catalog", () => {
     ).toBe(false);
     expect(
       new Set(operations.map((operation) => operation.operationId)).size,
-    ).toBe(151);
-    expect(new Set(operations.map((operation) => operation.command)).size).toBe(
-      151,
+    ).toBe(156);
+    const commands = operations.flatMap(({ command }) =>
+      command ? command.split(" / ") : [],
     );
+    expect(new Set(commands).size).toBe(commands.length);
+    expect(commands).toHaveLength(156);
   });
 
   it("exposes explicit image staging as a retryable preparation operation", () => {
@@ -33,9 +35,12 @@ describe("public operation catalog", () => {
 
   it("resolves every command and prefers the longest command path", () => {
     for (const operation of operations) {
-      expect(
-        resolveOperation(operation.command.split(" "))?.operation.operationId,
-      ).toBe(operation.operationId);
+      if (!operation.command) continue;
+      for (const command of operation.command.split(" / ")) {
+        expect(
+          resolveOperation(command.split(" "))?.operation.operationId,
+        ).toBe(operation.operationId);
+      }
     }
     expect(
       resolveOperation(["sandbox", "exec", "get", "sandbox", "exec"])?.operation
@@ -44,6 +49,21 @@ describe("public operation catalog", () => {
     expect(
       resolveOperation(["billing", "usage", "summary"])?.operation.operationId,
     ).toBe("billing.usage.get");
+  });
+
+  it("preserves CLI aliases and SDK-only tunnel reservations without MCP names", () => {
+    const tunnels = operations.filter(({ operationId }) =>
+      operationId.startsWith("tunnel."),
+    );
+    expect(tunnels).toHaveLength(5);
+    expect(tunnels.every(({ mcpName }) => mcpName === null)).toBe(true);
+    expect(resolveOperation(["tunnel", "http"])?.operation.operationId).toBe(
+      "tunnel.attach",
+    );
+    expect(resolveOperation(["tunnel", "tcp"])?.operation.operationId).toBe(
+      "tunnel.attach",
+    );
+    expect(resolveOperation(["tunnel", "reserve"])).toBeUndefined();
   });
 
   it("never exposes internal or unversioned paths", () => {
@@ -65,7 +85,7 @@ describe("public operation catalog", () => {
     ).toHaveLength(11);
     expect(
       operations.filter((operation) => operation.requiresPreflight),
-    ).toHaveLength(13);
+    ).toHaveLength(14);
     expect(
       operations
         .filter((operation) => operation.requiresPreflight)
