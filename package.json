@@ -1,7 +1,7 @@
 {
   "name": "@amaretto-software-labs/borealis-cli",
   "version": "0.1.0",
-  "description": "Official command-line interface for the Borealis public API",
+  "description": "Official command-line interface for Borealis Cloud and standalone supervisors",
   "license": "Apache-2.0",
   "type": "module",
   "repository": {
@@ -34,11 +34,14 @@
     "prepack": "pnpm clean && pnpm build",
     "test": "vitest run",
     "typecheck": "tsc -p . --noEmit",
+    "parity:standalone": "tsx scripts/check-standalone-catalog.ts",
     "parity:runtime": "node scripts/import-runtime-catalog.mjs --check",
     "parity:runtime:update": "node scripts/import-runtime-catalog.mjs"
   },
   "dependencies": {
+    "@balena/dockerignore": "^1.0.2",
     "commander": "^14.0.3",
+    "tar-stream": "^3.2.2",
     "undici": "^7.24.8",
     "ws": "^8.18.3",
     "zod": "^4.3.6"
@@ -46,6 +49,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.1",
+    "@types/tar-stream": "^3.1.5",
     "@types/ws": "^8.18.1",
     "eslint": "^9.39.1",
     "prettier": "^3.7.4",

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "./app.js";
-import { operations } from "./catalog.js";
 
 function commandNames(help: string): string[] {
   const commands = help.split("Commands:\n")[1]?.split("\n\n")[0] ?? "";
@@ -33,26 +32,33 @@ describe("rendered CLI help", () => {
       const help = await renderHelp(args);
       const names = commandNames(help);
       const expected = [
-        ...new Set(
-          operations.map((operation) => operation.command.split(" ")[0]!),
-        ),
         "auth",
+        "cloud",
         "completion",
+        "doctor",
         "help",
+        "image",
+        "network",
+        "operation",
+        "profile",
+        "status",
+        "supervisor",
         "version",
-      ].sort();
+        "vm",
+      ];
       expect(names).toEqual(expected);
-      expect(help).toContain("API operations");
+      expect(help).toContain("borealis vm create --name dev --image");
+      expect(help).not.toContain("API operations");
     },
   );
 
   it.each([
-    ["sandbox", "--help"],
-    ["sandbox", "exec", "--help"],
-    ["logical-machine", "--help"],
+    ["vm", "--help"],
+    ["vm", "exec", "--help"],
+    ["image", "--help"],
     ["auth", "--help"],
-    ["--profile", "prod", "logical-machine", "--help"],
-    ["help", "sandbox"],
+    ["--profile", "prod", "network", "--help"],
+    ["help", "vm"],
   ])("lists nested commands alphabetically for %j", async (...args) => {
     const help = await renderHelp(args);
     const names = commandNames(help);
@@ -62,9 +68,9 @@ describe("rendered CLI help", () => {
   });
 
   it("preserves operation flags and identifiers in leaf help", async () => {
-    const help = await renderHelp(["logical-machine", "hibernate", "--help"]);
-    expect(help).toContain("Usage: borealis logical-machine hibernate");
-    expect(help).toContain("--idempotency-key <value>");
-    expect(help).toContain("[identifiers...]");
+    const help = await renderHelp(["vm", "inspect", "--help"]);
+    expect(help).toContain("Usage: borealis vm inspect");
+    expect(help).toContain("[vm-id]");
+    expect(help).not.toContain("sandbox.get");
   });
 });

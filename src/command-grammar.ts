@@ -1,16 +1,22 @@
 import { Command, Option } from "commander";
-import { operations } from "./catalog.js";
+import { helperCommands } from "./host-helper.js";
+import { commandGroups, publicOperations } from "./public-commands.js";
 import type { Operation } from "./types.js";
 
 const valueOptions = [
   "account",
   "arg",
   "architecture",
+  "attachment",
   "body",
   "cancel-url",
+  "checkpoint-policy",
   "client-id",
   "cols",
   "command",
+  "context",
+  "dockerfile",
+  "archive",
   "container-port",
   "cpu",
   "cursor",
@@ -28,11 +34,14 @@ const valueOptions = [
   "image",
   "kind",
   "limit",
+  "label",
+  "local-port",
   "memory",
   "memory-mib",
   "microcredits",
   "name",
   "namespace",
+  "network",
   "output",
   "page",
   "page-size",
@@ -41,13 +50,17 @@ const valueOptions = [
   "pool",
   "port",
   "price",
+  "prepared-image",
   "protocol",
   "reason",
   "region",
+  "registry",
   "repository",
   "root-disk",
+  "root-disk-gib",
   "request-id",
   "role",
+  "routing-domain",
   "runtime",
   "runtime-template",
   "rows",
@@ -68,6 +81,7 @@ const valueOptions = [
   "tail",
   "target",
   "template-revision",
+  "revision",
   "threshold",
   "timeout",
   "type",
@@ -79,9 +93,12 @@ const valueOptions = [
 ] as const;
 
 const booleanOptions = [
+  "clear-default-dns",
   "default",
   "disable",
   "enable",
+  "enable-nested-containers",
+  "forward",
   "include-secret",
   "inactive",
   "keep",
@@ -98,49 +115,68 @@ type BooleanOption = (typeof booleanOptions)[number];
 const operationOptions: Readonly<
   Record<string, readonly (ValueOption | BooleanOption)[]>
 > = {
-  "vnet.delete": ["expected-generation"],
-  "vnet_attachment.delete": ["expected-generation"],
-  "network_service.delete": ["expected-generation"],
-  "logical_machine.allocate": [
-    "name",
+  "vnet.create": ["name", "routing-domain"],
+  "vnet_attachment.create": ["network"],
+  "network_service.create": ["network", "label", "attachment"],
+  "network_service.update": ["network", "attachment"],
+  "network_service.delete": ["network"],
+  "vm_network_configuration.update": ["attachment", "clear-default-dns"],
+  "sandbox.start": ["idempotency-key", "wait", "timeout"],
+  "sandbox.resume": ["idempotency-key", "wait", "timeout"],
+  "sandbox.stop": ["idempotency-key", "wait", "timeout"],
+  "sandbox.delete": ["idempotency-key", "wait", "timeout"],
+  "sandbox.pause": ["wait", "timeout"],
+  "operation.get": ["timeout"],
+  "supervisor.events": ["limit"],
+  "supervisor.logs": ["limit"],
+  "runtime_image_build.create": [
+    "context",
+    "dockerfile",
+    "archive",
     "image",
-    "cpu",
-    "memory",
-    "kind",
+    "architecture",
+    "registry",
+    "enable-nested-containers",
     "wait",
     "timeout",
   ],
-  "logical_machine.wake": ["wait", "timeout"],
-  "logical_machine.start": ["wait", "timeout"],
-  "runtime_template.activate": ["wait", "timeout"],
-  "sandbox.start": ["idempotency-key", "wait", "timeout"],
-  "sandbox.resume": ["idempotency-key", "wait", "timeout"],
-  "sandbox.stop": ["idempotency-key"],
-  "sandbox.delete": ["idempotency-key"],
+  "runtime_image_build.cancel": ["idempotency-key", "wait", "timeout"],
+  "runtime_image_build.get": ["wait", "timeout"],
+  "runtime_image_template.stage": [
+    "vcpu",
+    "memory-mib",
+    "root-disk-gib",
+    "idempotency-key",
+    "wait",
+    "timeout",
+  ],
   "sandbox.create": [
+    "checkpoint-policy",
+    "enable-nested-containers",
+    "wait",
+    "timeout",
     "name",
     "image",
     "command",
     "arg",
     "env",
-    "port",
     "workdir",
-    "working-directory",
-    "idle-timeout",
-    "cpu",
-    "memory",
-    "runtime",
-    "runtime-template",
-    "template-revision",
+    "prepared-image",
+    "revision",
     "architecture",
     "vcpu",
     "memory-mib",
-    "root-disk",
+    "root-disk-gib",
     "no-start",
   ],
-  "sandbox.port.register": ["container-port", "protocol"],
-  "sandbox.exec.start": ["command", "timeout"],
-  "sandbox.exec.transient": ["command"],
+  "sandbox.port.register": [
+    "container-port",
+    "protocol",
+    "forward",
+    "local-port",
+  ],
+  "sandbox.exec.start": ["command", "arg", "timeout"],
+  "sandbox.exec.transient": ["command", "arg", "timeout"],
   "sandbox.logs.get": ["tail"],
   "sandbox.workspace.export": ["output"],
   "sandbox.workspace.import": ["keep", "wait", "timeout"],
@@ -221,6 +257,42 @@ const operationOptions: Readonly<
   "billing.auto_top_up.configure": ["enable", "disable", "threshold", "target"],
 };
 
+const optionDescriptions: Readonly<Record<string, string>> = {
+  arg: "Pass one argument to the command. Repeat for more arguments.",
+  architecture: "VM architecture (x86_64 or aarch64)",
+  body: "Supply an advanced request as JSON",
+  context: "Directory containing the Dockerfile and build context",
+  image:
+    "OCI image reference. VM creation from OCI is available on standalone hosts.",
+  "memory-mib": "Guest memory in MiB",
+  "prepared-image": "Prepared image ID from 'borealis image list'",
+  revision: "Prepared image revision",
+  "root-disk-gib": "Guest root disk capacity in GiB",
+  timeout: "Maximum time in seconds",
+  vcpu: "Number of guest vCPUs",
+  wait: "Wait for the operation to finish",
+};
+
+const helperDescriptions: Readonly<Record<string, string>> = {
+  apply: "Apply an approved update plan",
+  "builder-install": "Install the image builder on this host",
+  "cloud-connect": "Connect this host to Borealis Cloud",
+  "cloud-disconnect": "Disconnect this host from Borealis Cloud",
+  "cloud-status": "Show this host's Cloud connection state",
+  "config-apply": "Apply reviewed standalone host settings",
+  "config-show": "Show the current standalone configuration",
+  "config-validate": "Validate a standalone configuration file",
+  logs: "Read the supervisor service journal",
+  plan: "Plan an update from a signed release bundle",
+  repair: "Inspect or resume an interrupted host maintenance action",
+  restart: "Restart the supervisor safely",
+  start: "Start the supervisor",
+  stop: "Stop the supervisor when the host is idle",
+  uninstall: "Uninstall the supervisor and retain its data",
+  "update-check": "Check a signed release bundle for updates",
+  "update-status": "Show the state of a host update",
+};
+
 function addOperationOptions(command: Command, operation: Operation): void {
   const names = new Set<ValueOption | BooleanOption>(
     operationOptions[operation.operationId] ?? [],
@@ -235,7 +307,7 @@ function addOperationOptions(command: Command, operation: Operation): void {
     names.add("set");
   }
   for (const name of valueOptions.filter((candidate) => names.has(candidate))) {
-    const option = new Option(`--${name} <value>`);
+    const option = new Option(`--${name} <value>`, optionDescriptions[name]);
     if (
       [
         "arg",
@@ -258,63 +330,147 @@ function addOperationOptions(command: Command, operation: Operation): void {
     command.addOption(option);
   }
   for (const name of booleanOptions.filter((candidate) => names.has(candidate)))
-    command.option(`--${name}`);
+    command.option(`--${name}`, optionDescriptions[name]);
 }
 
 export function createCommandGrammar(): Command {
   const program = new Command()
     .name("borealis")
-    .description("Official command-line client for the Borealis public API")
+    .description(
+      "Manage virtual machines on standalone hosts and Borealis Cloud",
+    )
     .configureHelp({ sortSubcommands: true })
     .helpOption(false)
-    .option("-h, --help")
-    .option("-V, --version")
-    .option("--api <origin>")
-    .option("--identity <origin>")
-    .option("--app <origin>")
-    .option("--profile <name>")
-    .option("--organization <id>")
-    .option("--token-file <path>")
-    .option("--token <token>")
-    .option("--json")
-    .option("--yes");
+    .option("-h, --help", "Show usage and examples")
+    .option("-V, --version", "Show the installed CLI version")
+    .option("--api <origin>", "Override the Cloud API origin")
+    .option("--identity <origin>", "Override the Cloud identity origin")
+    .option("--app <origin>", "Override the Cloud application origin")
+    .option("--profile <name>", "Use a named target for this command")
+    .option("--organization <id>", "Use a Cloud organization")
+    .option("--token-file <path>", "Read a Cloud access token from a file")
+    .addOption(new Option("--token <token>").hideHelp())
+    .option("--json", "Write machine-readable output")
+    .option("--yes", "Confirm a destructive action without prompting");
 
   const nodes = new Map<string, Command>();
-  for (const operation of [...operations].sort(
-    (left, right) =>
-      left.command.split(" ").length - right.command.split(" ").length,
-  )) {
+  function commandNode(command: string): Command {
     let parent = program;
     let path = "";
-    for (const token of operation.command.split(" ")) {
+    for (const token of command.split(" ")) {
       path = path ? `${path} ${token}` : token;
       let node = nodes.get(path);
       if (!node) {
         node = new Command(token).configureHelp({ sortSubcommands: true });
+        const description = commandGroups[path];
+        if (description) node.description(description);
         parent.addCommand(node);
         nodes.set(path, node);
       }
       parent = node;
     }
-    parent.description(`${operation.operationId} (${operation.scope})`);
-    parent.argument("[identifiers...]");
-    addOperationOptions(parent, operation);
-    parent.action(() => undefined);
+    return parent;
+  }
+  for (const { operation, description } of publicOperations) {
+    const node = commandNode(operation.command).description(description);
+    for (const [, field] of operation.path.matchAll(/\{([^}]+)\}/g)) {
+      const name =
+        field === "sandboxId"
+          ? "vm-id"
+          : field!.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      node.argument(`[${name}]`);
+    }
+    if (
+      ["sandbox.workspace.import", "sandbox.workspace.export"].includes(
+        operation.operationId,
+      )
+    )
+      node.argument("[archive]");
+    addOperationOptions(node, operation);
+    node.action(() => undefined);
   }
 
-  const auth = program.command("auth");
+  const supervisor = commandNode("supervisor");
+  supervisor
+    .command("install")
+    .description("Install a verified local host bundle")
+    .requiredOption("--bundle <directory>")
+    .option("--configuration <file>")
+    .option("--without-builder")
+    .option("--socket <path>")
+    .action(() => undefined);
+  for (const [command, helper] of Object.entries(helperCommands)) {
+    const node = commandNode(command).action(() => undefined);
+    node.description(helperDescriptions[helper.command]!);
+    if (helper.acceptsBundle) node.requiredOption("--bundle <directory>");
+    if (helper.command === "uninstall")
+      node.option(
+        "--bundle <directory>",
+        "Resume cleanup with the exact signed release",
+      );
+    if (helper.command === "apply")
+      node
+        .requiredOption("--plan-id <digest>")
+        .option("--wait")
+        .option("--timeout <seconds>");
+    if (helper.command === "update-status") node.argument("[attemptId]");
+    if (helper.command === "repair") node.option("--resume");
+    if (["config-validate", "config-apply"].includes(helper.command))
+      node.requiredOption("--file <path>");
+    if (helper.command === "config-apply")
+      node.requiredOption("--revision <digest>");
+    if (helper.command === "cloud-connect")
+      node
+        .requiredOption("--control-plane <https-origin>")
+        .option("--enrollment-code-file <path>")
+        .option("--enrollment-code-stdin")
+        .option("--enable-control")
+        .option("--pool <pool>");
+  }
+
+  const profile = commandNode("profile");
+  profile
+    .command("add <name>")
+    .description("Register a local, SSH, or Cloud target")
+    .option("--local")
+    .option("--ssh <alias>")
+    .option("--cloud")
+    .option("--socket <path>")
+    .action(() => undefined);
+  profile
+    .command("list")
+    .description("List targets and show the selected target")
+    .action(() => undefined);
+  profile
+    .command("use <name>")
+    .description("Select the default target")
+    .action(() => undefined);
+
+  const auth = commandNode("auth");
   auth
     .command("login")
+    .description("Sign in to Borealis Cloud")
     .option("--client-id <id>")
     .option("--scope <scopes>")
     .option("--redirect-port <port>")
     .option("--login-hint <email>")
     .action(() => undefined);
-  auth.command("whoami").action(() => undefined);
-  auth.command("logout").action(() => undefined);
-  program.command("completion <shell>").action(() => undefined);
-  program.command("version").action(() => undefined);
-  program.command("help [command...]").action(() => undefined);
+  auth
+    .command("logout")
+    .description("Sign out of Borealis Cloud")
+    .action(() => undefined);
+  program
+    .command("completion <shell>")
+    .description("Generate Bash, Fish, or Zsh completions")
+    .action(() => undefined);
+  program
+    .command("version")
+    .description("Show the installed CLI version")
+    .action(() => undefined);
+  program
+    .command("help [command...]")
+    .description("Show usage and examples")
+    .action(() => undefined);
   program.action(() => undefined);
   program.exitOverride();
   program.configureOutput({ writeErr: () => undefined });

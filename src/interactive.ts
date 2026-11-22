@@ -1,3 +1,4 @@
+import { createConnection } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import WebSocket, { type RawData } from "ws";
 
@@ -127,19 +128,23 @@ export async function bridgeInteractiveStreams(
 
 export async function attach(
   url: string,
-  token: string,
+  token: string | undefined,
   organization?: string,
   signal?: AbortSignal,
+  socketPath?: string,
 ): Promise<void> {
   signal?.throwIfAborted();
   const websocketUrl = new URL(url);
   websocketUrl.protocol = websocketUrl.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(websocketUrl, {
+    ...(socketPath
+      ? { createConnection: () => createConnection(socketPath) }
+      : {}),
     maxPayload: maximumBufferedBytes,
     handshakeTimeout: 30_000,
     ...(signal ? { signal } : {}),
     headers: {
-      authorization: `Bearer ${token}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(organization ? { "x-organization-id": organization } : {}),
     },
   });

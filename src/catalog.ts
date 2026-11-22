@@ -1,3 +1,4 @@
+import { standaloneOperations } from "./standalone-catalog.js";
 import runtimeOperationData from "./runtime-operations.json" with { type: "json" };
 import operationData from "./operations.json" with { type: "json" };
 import { operationSchema, type Operation } from "./types.js";
@@ -12,10 +13,12 @@ export const operations: readonly Operation[] = Object.freeze(
   ),
 );
 
+export const commandOperations = [...operations, ...standaloneOperations];
+
 export function resolveOperation(
   args: readonly string[],
 ): { operation: Operation; rest: string[] } | undefined {
-  return operations
+  return commandOperations
     .map((operation) => ({ operation, tokens: operation.command.split(" ") }))
     .filter(({ tokens }) =>
       tokens.every((token, index) => args[index]?.toLowerCase() === token),

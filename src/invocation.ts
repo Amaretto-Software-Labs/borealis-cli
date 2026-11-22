@@ -14,11 +14,16 @@ const valueOptions = new Set([
   "--architecture",
   "--api",
   "--app",
+  "--attachment",
   "--body",
   "--cancel-url",
+  "--checkpoint-policy",
   "--client-id",
   "--cols",
   "--command",
+  "--context",
+  "--dockerfile",
+  "--archive",
   "--container-port",
   "--cpu",
   "--cursor",
@@ -36,13 +41,16 @@ const valueOptions = new Set([
   "--idle-timeout",
   "--image",
   "--kind",
+  "--label",
   "--limit",
+  "--local-port",
   "--login-hint",
   "--memory",
   "--memory-mib",
   "--microcredits",
   "--name",
   "--namespace",
+  "--network",
   "--organization",
   "--output",
   "--page",
@@ -52,15 +60,19 @@ const valueOptions = new Set([
   "--pool",
   "--port",
   "--price",
+  "--prepared-image",
   "--profile",
   "--protocol",
   "--reason",
   "--redirect-port",
   "--repository",
   "--root-disk",
+  "--root-disk-gib",
   "--region",
+  "--registry",
   "--request-id",
   "--role",
+  "--routing-domain",
   "--runtime",
   "--runtime-template",
   "--rows",
@@ -81,6 +93,7 @@ const valueOptions = new Set([
   "--tail",
   "--target",
   "--template-revision",
+  "--revision",
   "--threshold",
   "--timeout",
   "--token",
@@ -117,6 +130,7 @@ const numericOptions = new Set([
   "cpu",
   "idleTimeout",
   "limit",
+  "localPort",
   "memory",
   "memoryMib",
   "microcredits",
@@ -131,13 +145,18 @@ const numericOptions = new Set([
   "timeout",
   "vcpu",
   "rootDisk",
+  "rootDiskGib",
+  "revision",
   "windowMinutes",
 ]);
 const booleanOptionKeys = new Set([
   "clearWorkspace",
+  "clearDefaultDns",
   "default",
   "disable",
   "enable",
+  "enableNestedContainers",
+  "forward",
   "inactive",
   "keep",
   "newline",
@@ -153,6 +172,27 @@ export interface PreparedRequest {
   idempotencyKey?: string;
   output?: string;
   waitTimeoutSeconds?: number;
+  forwardPort?: number;
+}
+
+export function optionValue(
+  args: readonly string[],
+  option: string,
+): string | undefined {
+  let result: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const current = args[index]!;
+    let value: string | undefined;
+    if (current === option) value = args[++index];
+    else if (current.startsWith(`${option}=`))
+      value = current.slice(option.length + 1);
+    else continue;
+    if (!value) throw new Error(`Missing value for ${option}.`);
+    if (result !== undefined)
+      throw new Error(`${option} may only be specified once.`);
+    result = value;
+  }
+  return result;
 }
 
 function camelCase(option: string): string {
@@ -231,6 +271,8 @@ export async function prepareRequest(
   operation: Operation,
   args: readonly string[],
   signal?: AbortSignal,
+  standalone = false,
+  publicCommand = false,
 ): Promise<PreparedRequest> {
   const values: Record<string, unknown> = {};
   const positional: string[] = [];
@@ -303,14 +345,14 @@ export async function prepareRequest(
     return encodeURIComponent(value);
   });
   if (
-    operation.command === "sandbox workspace export" &&
+    operation.operationId === "sandbox.workspace.export" &&
     positional[position]
   ) {
     output = positional[position];
     position++;
   }
   if (
-    operation.command === "sandbox workspace import" &&
+    operation.operationId === "sandbox.workspace.import" &&
     positional[position]
   ) {
     values.archivePath = positional[position];
@@ -323,8 +365,8 @@ export async function prepareRequest(
   }
 
   if (
-    operation.command === "registry create" ||
-    operation.command === "registry update"
+    operation.operationId === "registry.create" ||
+    operation.operationId === "registry.update"
   ) {
     const direct =
       typeof values.secret === "string" ? values.secret : undefined;
@@ -357,6 +399,39 @@ export async function prepareRequest(
       values[to] = values[from];
     if (from !== to) delete values[from];
   };
+  if (
+    ["sandbox.create", "runtime_image_template.stage"].includes(
+      operation.operationId,
+    )
+  )
+    remap("rootDiskGib", "rootDisk");
+  if (
+    operation.operationId === "runtime_image_template.stage" &&
+    [values.vcpu, values.memoryMib, values.rootDisk].some(
+      (value) => value !== undefined,
+    )
+  ) {
+    if (body?.resources !== undefined || values.resources !== undefined)
+      throw new Error(
+        "Specify VM shape flags or an explicit resources object.",
+      );
+    values.resources = {
+      vcpu: values.vcpu ?? 1,
+      memoryMiB: values.memoryMib ?? 2048,
+      rootDiskGiB: values.rootDisk ?? 20,
+    };
+    delete values.vcpu;
+    delete values.memoryMib;
+    delete values.rootDisk;
+  }
+  if (operation.operationId === "runtime_image_build.create") {
+    if (
+      values.registry !== undefined &&
+      (typeof values.registry !== "string" || !isGuid(values.registry))
+    )
+      throw new Error("--registry requires a registry connection UUID.");
+    remap("registry", "registryConnectionId");
+  }
   if (operation.operationId.startsWith("registry.")) {
     remap("name", "displayName");
     remap("host", "registryHost");
@@ -407,6 +482,11 @@ export async function prepareRequest(
       operation.operationId,
     )
   ) {
+    if (publicCommand && operation.operationId === "sandbox.create") {
+      remap("preparedImage", "runtimeTemplate");
+      remap("revision", "templateRevision");
+      if (!standalone) requireCloudPreparedImage(values, body);
+    }
     remap("arg", "args");
     remap("workdir", "workingDirectory");
     remap("idleTimeout", "idleTimeoutMinutes");
@@ -436,7 +516,17 @@ export async function prepareRequest(
     ) {
       throw new Error("--runtime must be container or microvm.");
     }
-    if (runtimeKind === "microvm") {
+    if (
+      !standalone &&
+      (values.checkpointPolicy !== undefined ||
+        values.enableNestedContainers !== undefined)
+    )
+      throw new Error(
+        "These sandbox create flags require a direct supervisor profile.",
+      );
+    if (standalone && operation.operationId === "sandbox.create") {
+      prepareStandaloneSandbox(values, body);
+    } else if (runtimeKind === "microvm") {
       if (values.image !== undefined) {
         throw new Error(
           "--image cannot be combined with --runtime microvm; use --runtime-template.",
@@ -448,7 +538,9 @@ export async function prepareRequest(
         !values.architecture
       ) {
         throw new Error(
-          "MicroVM creation requires --runtime-template, --template-revision, and --architecture.",
+          publicCommand
+            ? "Cloud VM creation requires --prepared-image, --revision, and --architecture. Run 'borealis image list'."
+            : "MicroVM creation requires --runtime-template, --template-revision, and --architecture.",
         );
       }
       if (
@@ -495,11 +587,43 @@ export async function prepareRequest(
       delete values.memory;
     }
   }
-  const waitTimeoutSeconds = wait
-    ? values.timeout === undefined
-      ? 900
-      : Number(values.timeout)
-    : undefined;
+  let forwardPort: number | undefined;
+  if (
+    operation.operationId === "sandbox.port.register" &&
+    (values.forward === true || values.localPort !== undefined)
+  ) {
+    if (!standalone || values.forward !== true)
+      throw new Error(
+        "--local-port requires --forward with an SSH supervisor profile.",
+      );
+    const port = values.localPort ?? 0;
+    if (!Number.isInteger(port) || Number(port) < 0 || Number(port) > 65_535)
+      throw new Error("--local-port must be an integer from 0 to 65535.");
+    forwardPort = Number(port);
+    delete values.forward;
+    delete values.localPort;
+  }
+  const waitsForOperation = operation.command === "operation wait";
+  const image = values.image ?? body?.image;
+  const createsFromImage =
+    operation.operationId === "sandbox.create" &&
+    typeof image === "string" &&
+    image.length > 0;
+  let defaultWaitSeconds = 900;
+  // Leave time to observe the terminal receipt after each standalone deadline.
+  if (standalone && (waitsForOperation || createsFromImage))
+    defaultWaitSeconds = 9150;
+  else if (
+    standalone &&
+    ["runtime_image_build.create", "runtime_image_build.get"].includes(
+      operation.operationId,
+    )
+  )
+    defaultWaitSeconds = 7350;
+  const waitTimeoutSeconds =
+    wait || waitsForOperation
+      ? Number(values.timeout ?? defaultWaitSeconds)
+      : undefined;
   if (
     waitTimeoutSeconds !== undefined &&
     (!Number.isInteger(waitTimeoutSeconds) ||
@@ -507,7 +631,12 @@ export async function prepareRequest(
       waitTimeoutSeconds > 21_600)
   )
     throw new Error("--timeout must be an integer from 1 to 21600 seconds.");
-  if (operation.operationId === "sandbox.exec.start") {
+  if (
+    ["sandbox.exec.start", "sandbox.exec.transient"].includes(
+      operation.operationId,
+    )
+  ) {
+    remap("arg", "args");
     remap("timeout", "timeoutSeconds");
   } else if (operation.operationId === "interactive.stdin") {
     remap("newline", "addNewLine");
@@ -575,8 +704,45 @@ export async function prepareRequest(
     throw new Error(
       "Managed service stop requires the original launchRequestId as --idempotency-key.",
     );
+  if (
+    publicCommand &&
+    ["vnet_attachment.create", "network_service.create"].includes(
+      operation.operationId,
+    )
+  )
+    remap("network", "vnetId");
+  if (
+    publicCommand &&
+    ["network_service.create", "network_service.update"].includes(
+      operation.operationId,
+    )
+  )
+    remap("attachment", "targetAttachmentId");
+  if (
+    publicCommand &&
+    operation.operationId === "vm_network_configuration.update"
+  ) {
+    remap("attachment", "attachmentId");
+    if (
+      values.clearDefaultDns === true &&
+      (values.attachmentId !== undefined || body?.attachmentId !== undefined)
+    )
+      throw new Error("Choose --attachment or --clear-default-dns.");
+    if (values.clearDefaultDns === true) values.attachmentId = null;
+    if (values.attachmentId === undefined && body?.attachmentId === undefined)
+      throw new Error("Specify --attachment or --clear-default-dns.");
+    delete values.clearDefaultDns;
+  }
+  if (
+    publicCommand &&
+    ["network_service.update", "network_service.delete"].includes(
+      operation.operationId,
+    )
+  )
+    delete values.network;
   const query = new URLSearchParams();
   if (
+    !publicCommand &&
     operation.method === "DELETE" &&
     /^(vnet|vnet_attachment|network_service)\./.test(operation.operationId)
   ) {
@@ -607,11 +773,13 @@ export async function prepareRequest(
   if (body) delete body.idempotencyKey;
   if (operation.operationId === "snapshot.create" && body)
     delete body.requestId;
-  const runtimeOperation = conditionalOperationIds.has(operation.operationId);
+  const runtimeOperation =
+    !standalone && conditionalOperationIds.has(operation.operationId);
   if (
     runtimeOperation &&
     operation.idempotency === "idempotency-key" &&
-    (!explicit || !isGuid(explicit))
+    ((!publicCommand && !explicit) ||
+      (explicit !== undefined && !isGuid(explicit)))
   )
     throw new Error(
       "Runtime v2 mutations require an explicit UUID --idempotency-key; preserve it for reconciliation.",
@@ -622,11 +790,17 @@ export async function prepareRequest(
   )
     throw new Error("Checkpoint pin identity must match --idempotency-key.");
   const resolvedIdempotencyKey =
-    operation.idempotency === "idempotency-key"
+    operation.idempotency === "idempotency-key" ||
+    (standalone && operation.method !== "GET")
       ? (explicit ?? randomUUID())
       : runtimeLifecycleMappings[operation.operationId]
-        ? explicit
+        ? (explicit ?? (publicCommand ? randomUUID() : undefined))
         : undefined;
+  if (standalone && resolvedIdempotencyKey && !isGuid(resolvedIdempotencyKey))
+    throw new Error(
+      "Direct supervisor mutations require a UUID --idempotency-key.",
+    );
+
   if (
     operation.operationId === "billing.top_up.create" &&
     body &&
@@ -641,13 +815,138 @@ export async function prepareRequest(
       ? { idempotencyKey: resolvedIdempotencyKey }
       : {}),
     ...(output ? { output } : {}),
+    ...(forwardPort === undefined ? {} : { forwardPort }),
     ...(waitTimeoutSeconds !== undefined ? { waitTimeoutSeconds } : {}),
   };
+}
+
+function requireCloudPreparedImage(
+  values: Record<string, unknown>,
+  body: Record<string, unknown> | undefined,
+): void {
+  if (values.image !== undefined || body?.image !== undefined)
+    throw new Error(
+      "Creating a VM directly from --image requires a standalone supervisor. On Cloud, build an image with 'borealis image build', then select a prepared revision from 'borealis image list'.",
+    );
+  if (values.runtime !== undefined && values.runtime !== "microvm")
+    throw new Error("VM creation requires a prepared microVM image on Cloud.");
+  if (body?.runtime !== undefined) {
+    const runtime = body.runtime as Record<string, unknown> | null;
+    if (
+      !runtime ||
+      runtime.kind !== "microvm" ||
+      typeof runtime.templateId !== "string" ||
+      !runtime.templateId ||
+      !Number.isSafeInteger(runtime.templateRevision) ||
+      Number(runtime.templateRevision) < 1 ||
+      !["x86_64", "aarch64"].includes(String(runtime.architecture))
+    )
+      throw new Error(
+        "Cloud VM creation requires a prepared microVM image ID, revision, and architecture.",
+      );
+    values.runtimeTemplate ??= runtime.templateId;
+    values.templateRevision ??= runtime.templateRevision;
+    values.architecture ??= runtime.architecture;
+    const resources = runtime.resources as Record<string, unknown> | undefined;
+    values.vcpu ??= resources?.vcpu ?? 1;
+    values.memoryMib ??= resources?.memoryMiB ?? 2048;
+    values.rootDisk ??= resources?.rootDiskGiB ?? 20;
+  }
+  values.runtime = "microvm";
+}
+
+function prepareStandaloneSandbox(
+  values: Record<string, unknown>,
+  body: Record<string, unknown> | undefined,
+): void {
+  if (
+    values.runtime === "container" ||
+    values.cpu !== undefined ||
+    values.memory !== undefined
+  )
+    throw new Error(
+      "The standalone supervisor creates microVMs. Use --vcpu and --memory-mib for the VM shape.",
+    );
+  const image = values.image ?? body?.image;
+  const providedRuntime = body?.runtime;
+  if (
+    providedRuntime !== undefined &&
+    (typeof providedRuntime !== "object" ||
+      !providedRuntime ||
+      Array.isArray(providedRuntime))
+  )
+    throw new Error("The standalone sandbox runtime must be an object.");
+  const runtime = {
+    ...(providedRuntime as Record<string, unknown> | undefined),
+  };
+  const template =
+    values.runtimeTemplate ?? runtime.templateId ?? body?.templateId;
+  const revision =
+    values.templateRevision ??
+    runtime.templateRevision ??
+    body?.templateRevision;
+  if (runtime.kind !== undefined && runtime.kind !== "microvm")
+    throw new Error("The standalone supervisor creates microVMs.");
+  if (image !== undefined && (template !== undefined || revision !== undefined))
+    throw new Error(
+      "Specify an OCI --image or a prepared image with --prepared-image and --revision.",
+    );
+  if (
+    image === undefined &&
+    (typeof template !== "string" ||
+      !Number.isSafeInteger(revision) ||
+      Number(revision) < 1)
+  )
+    throw new Error(
+      "Standalone VM creation requires --image, or --prepared-image and --revision.",
+    );
+  const architecture = values.architecture ?? runtime.architecture;
+  if (
+    architecture !== undefined &&
+    architecture !== "x86_64" &&
+    architecture !== "aarch64"
+  )
+    throw new Error("--architecture must be x86_64 or aarch64.");
+  const shape = {
+    ...(runtime.resources as Record<string, unknown> | undefined),
+  };
+  if (values.vcpu !== undefined) shape.vcpu = values.vcpu;
+  if (values.memoryMib !== undefined) shape.memoryMiB = values.memoryMib;
+  if (values.rootDisk !== undefined) shape.rootDiskGiB = values.rootDisk;
+  if (Object.keys(shape).length) {
+    shape.vcpu ??= 1;
+    shape.memoryMiB ??= 2048;
+    shape.rootDiskGiB ??= 20;
+  }
+  const policy = values.checkpointPolicy;
+  if (policy !== undefined && policy !== "Disabled" && policy !== "AgentTurn")
+    throw new Error("--checkpoint-policy must be Disabled or AgentTurn.");
+  values.runtime = {
+    ...runtime,
+    ...(policy === undefined ? {} : { checkpointPolicy: policy }),
+    kind: "microvm",
+    ...(template !== undefined
+      ? { templateId: template, templateRevision: revision }
+      : {}),
+    ...(architecture !== undefined ? { architecture } : {}),
+    ...(Object.keys(shape).length ? { resources: shape } : {}),
+  };
+  for (const key of [
+    "runtimeTemplate",
+    "checkpointPolicy",
+    "templateRevision",
+    "architecture",
+    "vcpu",
+    "memoryMib",
+    "rootDisk",
+  ])
+    delete values[key];
 }
 
 export async function readBoundedSecretStdin(
   stream: Readable,
   signal?: AbortSignal,
+  label = "Registry secret",
 ): Promise<string> {
   signal?.throwIfAborted();
   return await new Promise<string>((resolve, reject) => {
@@ -670,14 +969,14 @@ export async function readBoundedSecretStdin(
         return;
       }
       const secret = Buffer.concat(chunks).toString("utf8").trim();
-      if (!secret) reject(new Error("Registry secret from stdin is empty."));
+      if (!secret) reject(new Error(`${label} from stdin is empty.`));
       else resolve(secret);
     };
     const onData = (chunk: Buffer | string): void => {
       const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       bytes += value.byteLength;
       if (bytes > 65_536) {
-        finish(new Error("Registry secret from stdin exceeds 64 KiB."));
+        finish(new Error(`${label} from stdin exceeds 64 KiB.`));
         return;
       }
       chunks.push(value);

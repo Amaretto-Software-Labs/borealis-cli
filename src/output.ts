@@ -1,3 +1,65 @@
+import { formatPublicResult } from "./public-output.js";
+import type { Operation } from "./types.js";
+
+export const writesExecutionStreams = (operation: Operation): boolean =>
+  ["sandbox.exec.transient", "sandbox.exec.get"].includes(
+    operation.operationId,
+  );
+
+export function writeOperationResult(
+  operation: Operation,
+  result: unknown,
+  json: boolean,
+  target?: unknown,
+): void {
+  if (json) {
+    writeResult(target ? { target, result } : result, true);
+    return;
+  }
+  if (
+    writesExecutionStreams(operation) &&
+    result &&
+    typeof result === "object" &&
+    "stdout" in result &&
+    "stderr" in result
+  ) {
+    if (typeof result.stdout === "string" && result.stdout)
+      process.stdout.write(result.stdout);
+    if (typeof result.stderr === "string" && result.stderr)
+      process.stderr.write(result.stderr);
+    if (
+      !result.stdout &&
+      !result.stderr &&
+      operation.operationId === "sandbox.exec.get" &&
+      "status" in result
+    )
+      process.stderr.write(`Command ${String(result.status)}.\n`);
+    return;
+  }
+  writeResult(formatPublicResult(operation, result), false);
+}
+
+export function commandExitCode(
+  operation: Operation,
+  result: unknown,
+): number | undefined {
+  if (
+    operation.operationId !== "sandbox.exec.transient" ||
+    !result ||
+    typeof result !== "object"
+  )
+    return undefined;
+  if (
+    "exitCode" in result &&
+    Number.isInteger(result.exitCode) &&
+    Number(result.exitCode) >= 0 &&
+    Number(result.exitCode) <= 255
+  )
+    return Number(result.exitCode);
+  if ("status" in result && result.status !== "succeeded") return 3;
+  return undefined;
+}
+
 export function writeResult(result: unknown, json: boolean): void {
   if (result instanceof Uint8Array) {
     process.stdout.write(Buffer.from(result));

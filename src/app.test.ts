@@ -12,6 +12,186 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("Cloud image build observation", () => {
+  const buildId = "c7f3dfee-c32a-4391-a57d-7a9ecfb389ce";
+  const api = "https://builds.borealishq.io";
+  const args = [
+    "--api",
+    api,
+    "--json",
+    "image",
+    "build",
+    "--body",
+    JSON.stringify({
+      sourceKind: "oci_image",
+      imageReference: "debian:trixie-slim",
+      architecture: "x86_64",
+    }),
+    "--wait",
+  ];
+  const response = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  function capture() {
+    process.env.BOREALIS_ACCESS_TOKEN = "test-build-token";
+    return {
+      stdout: vi.spyOn(process.stdout, "write").mockImplementation(() => true),
+      stderr: vi.spyOn(process.stderr, "write").mockImplementation(() => true),
+    };
+  }
+
+  it.each(["e8181f06-1c6b-44ad-bc56-775295cd1a57", [buildId]])(
+    "rejects an initial status receipt with an unexpected build identity %j",
+    async (returnedId) => {
+      const { stdout } = capture();
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          response({ buildId: returnedId, status: "ready" }),
+        );
+      vi.stubGlobal("fetch", fetcher);
+      expect(
+        await run([
+          "--api",
+          api,
+          "--json",
+          "image",
+          "build",
+          "status",
+          buildId,
+          "--wait",
+        ]),
+      ).not.toBe(0);
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(
+        stdout.mock.calls.map(([line]) => String(line)).join(""),
+      ).not.toContain('"status":"ready"');
+    },
+  );
+
+  it("watches an admitted build without statusUri until ready even when a running phase says completed", async () => {
+    const { stdout, stderr } = capture();
+    const ready = {
+      buildId,
+      status: "ready",
+      phase: "completed",
+      templateRevision: 1,
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ buildId, status: "queued", phase: "queued" }, 202),
+      )
+      .mockResolvedValueOnce(
+        response({ buildId, status: "building", phase: "completed" }),
+      )
+      .mockResolvedValueOnce(response(ready));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await run(args)).toBe(0);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(
+      fetcher.mock.calls.map(([url, init]) => [String(url), init.method]),
+    ).toEqual([
+      [`${api}/api/v1/runtime-image-builds`, "POST"],
+      [`${api}/api/v1/runtime-image-builds/${buildId}`, "GET"],
+      [`${api}/api/v1/runtime-image-builds/${buildId}`, "GET"],
+    ]);
+    for (const [, init] of fetcher.mock.calls)
+      expect(new Headers(init.headers).get("authorization")).toBe(
+        "Bearer test-build-token",
+      );
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify(ready) + "\n",
+    );
+    expect(stderr.mock.calls.map(([line]) => String(line)).join("")).toContain(
+      "Image is ready",
+    );
+  });
+
+  it("returns awaiting approval as an unpublished candidate and shows the next command", async () => {
+    const { stdout, stderr } = capture();
+    const candidate = {
+      buildId,
+      status: "awaiting_approval",
+      phase: "completed",
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ buildId, status: "validating", phase: "cloud_validation" }),
+      )
+      .mockResolvedValueOnce(response(candidate));
+    vi.stubGlobal("fetch", fetcher);
+    expect(
+      await run([
+        "--api",
+        api,
+        "--json",
+        "image",
+        "build",
+        "status",
+        buildId,
+        "--wait",
+      ]),
+    ).toBe(0);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify(candidate) + "\n",
+    );
+    const progress = stderr.mock.calls.map(([line]) => String(line)).join("");
+    expect(progress).toContain("Approval is required before publication");
+    expect(progress).toContain(`image build approve ${buildId}`);
+    expect(progress).not.toContain("Image is ready");
+  });
+
+  it("reports an observation interruption without marking the accepted build failed or canceling it", async () => {
+    const { stdout, stderr } = capture();
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ buildId, status: "queued", phase: "queued" }, 202),
+      )
+      .mockResolvedValueOnce(
+        response({ detail: "Temporarily unavailable" }, 503),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    expect(await run(args)).toBe(4);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const receipt = JSON.parse(String(stdout.mock.calls[0]![0]));
+    expect(receipt).toMatchObject({
+      error: "observation_interrupted",
+      target: { type: "cloud" },
+      resource: { kind: "build", id: buildId },
+    });
+    expect(receipt.message).toContain("final state is unknown");
+    expect(receipt.message).toContain(`image build status ${buildId} --wait`);
+    expect(
+      stderr.mock.calls.map(([line]) => String(line)).join(""),
+    ).not.toContain(": Failed");
+  });
+
+  it("rejects a different build identity returned while observing", async () => {
+    const { stdout } = capture();
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(response({ buildId, status: "queued" }, 202))
+      .mockResolvedValueOnce(
+        response({
+          buildId: "e8181f06-1c6b-44ad-bc56-775295cd1a57",
+          status: "ready",
+        }),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    expect(await run(args)).toBe(4);
+    expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toMatchObject({
+      error: "observation_interrupted",
+      resource: { id: buildId },
+    });
+  });
+});
+
 describe("credential dispatch safety", () => {
   it("parses and validates inline auth-login options", () => {
     expect(
@@ -80,7 +260,7 @@ describe("credential dispatch safety", () => {
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     expect(
-      await run(["--api=https://override.borealishq.io", "context", "show"]),
+      await run(["--api=https://override.borealishq.io", "auth", "whoami"]),
     ).toBe(0);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]![0])).toBe(
@@ -94,7 +274,7 @@ describe("credential dispatch safety", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response('{"runtimeKind":"container"}', {
+        new Response(JSON.stringify({ sandboxId, runtimeKind: "container" }), {
           headers: { "content-type": "application/json" },
         }),
       )
@@ -110,9 +290,7 @@ describe("credential dispatch safety", () => {
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
 
-    expect(await run(["--yes", "--json", "sandbox", "delete", sandboxId])).toBe(
-      0,
-    );
+    expect(await run(["--yes", "--json", "vm", "delete", sandboxId])).toBe(0);
     expect(stdout).toHaveBeenCalledWith('{"accepted":true}\n');
   });
 
@@ -147,7 +325,7 @@ describe("credential dispatch safety", () => {
         await run([
           "--yes",
           "--json",
-          "sandbox",
+          "vm",
           "workspace",
           "import",
           "sandbox-id",
@@ -160,7 +338,14 @@ describe("credential dispatch safety", () => {
         expect(stderr).toHaveBeenCalledWith(
           "Workspace import failed: workspace_import_insufficient_storage\n",
         );
-      else expect(stderr).not.toHaveBeenCalled();
+      else {
+        expect(stderr).toHaveBeenCalledOnce();
+        expect(stderr).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /^Request key [0-9a-f-]+ on profile 'default'\n$/,
+          ),
+        );
+      }
     },
   );
 
@@ -170,7 +355,14 @@ describe("credential dispatch safety", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(
-      await run(["host", "enrollment", "get", "pool-id", "session-id"]),
+      await run([
+        "cloud",
+        "host",
+        "enrollment",
+        "inspect",
+        "pool-id",
+        "session-id",
+      ]),
     ).toBe(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -179,6 +371,7 @@ describe("credential dispatch safety", () => {
     {
       name: "service-principal creation",
       args: (destination: string) => [
+        "cloud",
         "service-principal",
         "create",
         "--name",
@@ -194,6 +387,7 @@ describe("credential dispatch safety", () => {
     {
       name: "host-enrollment creation",
       args: (destination: string) => [
+        "cloud",
         "host",
         "enrollment",
         "create",
@@ -213,9 +407,10 @@ describe("credential dispatch safety", () => {
     {
       name: "host-enrollment retrieval",
       args: (destination: string) => [
+        "cloud",
         "host",
         "enrollment",
-        "get",
+        "inspect",
         "pool-id",
         "session-id",
         `--output=${destination}`,
@@ -258,6 +453,7 @@ describe("credential dispatch safety", () => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(
       await run([
+        "cloud",
         "billing",
         "auto-top-up",
         "--enable",
@@ -277,6 +473,7 @@ describe("credential dispatch safety", () => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(
       await run([
+        "cloud",
         "billing",
         "auto-top-up",
         "--body",
@@ -292,7 +489,7 @@ describe("credential dispatch safety", () => {
     vi.stubGlobal("fetch", fetchMock);
     const controller = new AbortController();
     controller.abort();
-    expect(await run(["context", "show"], controller.signal)).toBe(130);
+    expect(await run(["auth", "whoami"], controller.signal)).toBe(130);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -309,6 +506,7 @@ describe("credential dispatch safety", () => {
     expect(
       await run([
         "--yes",
+        "vm",
         "snapshot",
         "create",
         "sandbox-id",
@@ -334,7 +532,21 @@ describe("credential dispatch safety", () => {
       .mockImplementation(() => true);
 
     expect(
-      await run(["sandbox", "create", "--name", "one"], controller.signal),
+      await run(
+        [
+          "vm",
+          "create",
+          "--name",
+          "one",
+          "--prepared-image",
+          "prepared",
+          "--revision",
+          "1",
+          "--architecture",
+          "x86_64",
+        ],
+        controller.signal,
+      ),
     ).toBe(130);
     expect(stderr).toHaveBeenCalledWith(
       expect.stringMatching(
@@ -390,6 +602,7 @@ describe("credential dispatch safety", () => {
       expect(
         await run(
           [
+            "cloud",
             "service-principal",
             "create",
             "--name",
@@ -412,6 +625,7 @@ describe("credential dispatch safety", () => {
     {
       name: "service principal",
       command: (destination: string) => [
+        "cloud",
         "service-principal",
         "create",
         "--name",
@@ -427,6 +641,7 @@ describe("credential dispatch safety", () => {
     {
       name: "host enrollment",
       command: (destination: string) => [
+        "cloud",
         "host",
         "enrollment",
         "create",
@@ -476,46 +691,28 @@ describe("credential dispatch safety", () => {
   );
 });
 
-describe("Runtime v2 cancellation output", () => {
-  it("prints the cancelled wake receipt and exits 130 after waiting", async () => {
+describe("VM lifecycle cancellation output", () => {
+  it("prints a cancelled wake receipt and exits 130 through the public VM command", async () => {
     process.env.BOREALIS_ACCESS_TOKEN = "token";
     const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
     const sandboxId = "a535812b-3c64-4888-824c-928530ad9e21";
     const receipt = { requestId, sandboxId, state: "Cancelled" };
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({
-              enabled: true,
-              operations: ["logical_machine.wake"],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        )
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({ requestId, sandboxId, state: "Requested" }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify(receipt), {
-            headers: { "content-type": "application/json" },
-          }),
-        ),
-    );
+    const invoke = vi
+      .spyOn(BorealisApiClient.prototype, "invoke")
+      .mockResolvedValue({ requestId, sandboxId, state: "Requested" });
+    const wait = vi
+      .spyOn(BorealisApiClient.prototype, "waitForRuntime")
+      .mockResolvedValue(receipt);
     const output = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(
       await run([
         "--api=https://api.example",
         "--json",
-        "logical-machine",
-        "wake",
+        "vm",
+        "resume",
         sandboxId,
         "--idempotency-key",
         requestId,
@@ -524,77 +721,24 @@ describe("Runtime v2 cancellation output", () => {
         "2",
       ]),
     ).toBe(130);
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: "sandbox.resume",
+        command: "vm resume",
+      }),
+      expect.objectContaining({ idempotencyKey: requestId }),
+    );
+    expect(wait).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId }),
+      2,
+    );
     expect(
       JSON.parse(output.mock.calls.map((call) => call[0]).join("")),
     ).toEqual(receipt);
   });
 });
 
-describe("managed service and private network terminal output", () => {
-  it.each([
-    { state: "failed", exitCode: 3 },
-    { state: "outcomeUnknown", exitCode: 4 },
-    { state: "cancelled", exitCode: 130 },
-    { state: "ready", exitCode: 0 },
-  ])(
-    "preserves managed service $state JSON and exits $exitCode",
-    async ({ state, exitCode }) => {
-      process.env.BOREALIS_ACCESS_TOKEN = "token";
-      const vmId = "a535812b-3c64-4888-824c-928530ad9e21";
-      const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
-      const observation = {
-        vmId,
-        requestId,
-        configurationGeneration: 7,
-        state,
-        initialized: false,
-        committedGeneration: 0,
-        publicationStatus: "pending",
-        authorityExpiresAt: new Date().toISOString(),
-        failureCode: state === "failed" ? "probe_failed" : null,
-      };
-      const fetcher = vi
-        .fn()
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({
-              enabled: true,
-              operations: ["managed_service.get"],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify(observation), {
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      vi.stubGlobal("fetch", fetcher);
-      const stdout = vi
-        .spyOn(process.stdout, "write")
-        .mockImplementation(() => true);
-      const stderr = vi
-        .spyOn(process.stderr, "write")
-        .mockImplementation(() => true);
-      expect(
-        await run([
-          "--api=https://api.example",
-          "--json",
-          "managed",
-          "service",
-          "get",
-          vmId,
-          requestId,
-        ]),
-      ).toBe(exitCode);
-      expect(stdout).toHaveBeenCalledOnce();
-      expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toEqual(observation);
-      expect(stderr).not.toHaveBeenCalled();
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: "GET" });
-    },
-  );
-
+describe("private network terminal output", () => {
   it.each([
     { state: "failed", exitCode: 3 },
     { state: "outcomeUnknown", exitCode: 4 },
@@ -641,9 +785,9 @@ describe("managed service and private network terminal output", () => {
         await run([
           "--api=https://api.example",
           "--json",
-          "private-network",
+          "network",
           "operation",
-          "get",
+          "status",
           requestId,
         ]),
       ).toBe(exitCode);
@@ -656,103 +800,154 @@ describe("managed service and private network terminal output", () => {
   );
 });
 
-describe("allocation cancellation recovery", () => {
-  const requestId = "e8a5c14c-57d4-4bf0-8307-aea8bd50272c";
-  const args = [
-    "--api=https://api.example",
-    "--json",
-    "logical-machine",
-    "allocation",
-    "cancel",
-    requestId,
-    "--yes",
-  ];
-  function setup() {
+describe("public command boundaries", () => {
+  it.each([0, 7])(
+    "returns guest exit code %i and writes execution streams",
+    async (exitCode) => {
+      process.env.BOREALIS_ACCESS_TOKEN = "token";
+      const invoke = vi
+        .spyOn(BorealisApiClient.prototype, "invoke")
+        .mockResolvedValue({
+          stdout: "guest output\n",
+          stderr: "guest error\n",
+          exitCode,
+          status: "succeeded",
+        });
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      expect(
+        await run([
+          "vm",
+          "exec",
+          "a535812b-3c64-4888-824c-928530ad9e21",
+          "--command",
+          "/bin/sh",
+          "--arg=-c",
+          "--arg",
+          "exit 7",
+        ]),
+      ).toBe(exitCode);
+      expect(invoke).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: "sandbox.exec.transient" }),
+        expect.objectContaining({
+          body: expect.objectContaining({
+            command: "/bin/sh",
+            args: ["-c", "exit 7"],
+          }),
+        }),
+      );
+      expect(stdout).toHaveBeenCalledWith("guest output\n");
+      expect(stderr).toHaveBeenCalledWith("guest error\n");
+    },
+  );
+
+  it("creates a Cloud microVM from a prepared image with explicit resource units", async () => {
     process.env.BOREALIS_ACCESS_TOKEN = "token";
+    const invoke = vi
+      .spyOn(BorealisApiClient.prototype, "invoke")
+      .mockResolvedValue({ sandboxId: "a535812b-3c64-4888-824c-928530ad9e21" });
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(
+      await run([
+        "vm",
+        "create",
+        "--name",
+        "dev",
+        "--prepared-image",
+        "prepared",
+        "--revision",
+        "1",
+        "--architecture",
+        "x86_64",
+        "--vcpu",
+        "2",
+        "--memory-mib",
+        "4096",
+        "--root-disk-gib",
+        "20",
+      ]),
+    ).toBe(0);
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: "sandbox.create" }),
+      expect.objectContaining({
+        body: expect.objectContaining({
+          name: "dev",
+          runtime: expect.objectContaining({
+            kind: "microvm",
+            templateId: "prepared",
+            templateRevision: 1,
+            architecture: "x86_64",
+            resources: { vcpu: 2, memoryMiB: 4096, rootDiskGiB: 20 },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    ["sandbox", "list"],
+    ["logical-machine", "wake", "vm-id"],
+    ["managed", "service", "get", "vm-id", "request-id"],
+    ["background", "lease", "acquire"],
+    ["vnet", "list"],
+    ["private-network", "operation", "get", "request-id"],
+  ])(
+    "rejects hidden implementation command %s without dispatch",
+    async (...args) => {
+      process.env.BOREALIS_ACCESS_TOKEN = "token";
+      const fetcher = vi.fn();
+      vi.stubGlobal("fetch", fetcher);
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      expect(await run(args)).toBe(1);
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses an unprepared Cloud image without creating a container", async () => {
+    process.env.BOREALIS_ACCESS_TOKEN = "token";
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    expect(
+      await run([
+        "vm",
+        "create",
+        "--name",
+        "dev",
+        "--image",
+        "debian:trixie-slim",
+      ]),
+    ).toBe(1);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("prepared"));
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("refuses a lifecycle response for another VM before mutation", async () => {
+    process.env.BOREALIS_ACCESS_TOKEN = "token";
+    const vmId = "a535812b-3c64-4888-824c-928530ad9e21";
     const fetcher = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          enabled: true,
-          operations: ["logical_machine.allocation.cancel"],
+          sandboxId: "d9ca33cb-ec1e-43d6-97e3-3d56de7f1a74",
+          runtimeKind: "container",
         }),
         { headers: { "content-type": "application/json" } },
       ),
     );
     vi.stubGlobal("fetch", fetcher);
-    const output = vi
-      .spyOn(process.stdout, "write")
+    const stderr = vi
+      .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
-    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    return { fetcher, output };
-  }
-  it.each(["transport", "response-body", "server"])(
-    "preserves the original request after a %s failure without retrying DELETE",
-    async (failure) => {
-      const { fetcher, output } = setup();
-      fetcher.mockResolvedValueOnce(
-        new Response(JSON.stringify({ preflightToken: "proof" }), {
-          headers: { "content-type": "application/json" },
-        }),
-      );
-      if (failure === "transport")
-        fetcher.mockRejectedValueOnce(new TypeError("connection lost"));
-      else if (failure === "server")
-        fetcher.mockResolvedValueOnce(
-          new Response("unavailable", { status: 503 }),
-        );
-      else
-        fetcher.mockResolvedValueOnce(
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.error(new TypeError("response lost"));
-              },
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      expect(await run(args)).toBe(4);
-      const receipt = JSON.parse(
-        output.mock.calls.map((call) => call[0]).join(""),
-      );
-      expect(receipt).toMatchObject({ error: "ambiguous_outcome", requestId });
-      expect(receipt).not.toHaveProperty("idempotencyKey");
-      expect(receipt.message).toContain(
-        `logical-machine allocation by-request ${requestId}`,
-      );
-      expect(fetcher).toHaveBeenCalledTimes(3);
-      const mutations = fetcher.mock.calls.filter(
-        (call) => call[1]?.method === "DELETE",
-      );
-      expect(mutations).toHaveLength(1);
-      expect(String(mutations[0]![0])).toBe(
-        `https://api.example/api/v1/logical-machines/allocations/${requestId}`,
-      );
-      expect(mutations[0]![1].headers).toMatchObject({
-        "x-borealis-preflight": "proof",
-      });
-    },
-  );
-  it("does not claim ambiguous cancellation if preflight fails before dispatch", async () => {
-    const { fetcher, output } = setup();
-    fetcher.mockRejectedValueOnce(new TypeError("preflight unavailable"));
-    expect(await run(args)).toBe(1);
-    expect(output).not.toHaveBeenCalled();
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(
-      fetcher.mock.calls.some((call) => call[1]?.method === "DELETE"),
-    ).toBe(false);
-  });
-  it("preserves a definitive cancellation refusal", async () => {
-    const { fetcher, output } = setup();
-    fetcher.mockResolvedValueOnce(
-      new Response(JSON.stringify({ preflightToken: "proof" }), {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    fetcher.mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
-    expect(await run(args)).toBe(2);
-    expect(output).not.toHaveBeenCalled();
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(await run(["--yes", "vm", "delete", vmId])).toBe(1);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("identity"));
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
   });
 });

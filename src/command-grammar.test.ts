@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { operations } from "./catalog.js";
+import { publicOperations, resolvePublicOperation } from "./public-commands.js";
 import {
   createCommandGrammar,
   validateCommandGrammar,
 } from "./command-grammar.js";
 
 describe("Commander grammar", () => {
-  it("defines all 75 customer operations as real nested commands", () => {
+  it("defines each declared public command against a catalog operation", () => {
     const program = createCommandGrammar();
-    for (const operation of operations) {
+    expect(
+      new Set(publicOperations.map(({ operation }) => operation.command)).size,
+    ).toBe(publicOperations.length);
+    for (const { operation } of publicOperations) {
       let node = program;
       for (const token of operation.command.split(" ")) {
         node = node.commands.find((candidate) => candidate.name() === token)!;
@@ -23,42 +26,37 @@ describe("Commander grammar", () => {
           ...identifiers,
         ]),
       ).not.toThrow();
+      expect(
+        resolvePublicOperation([
+          ...operation.command.split(" "),
+          ...identifiers,
+        ]),
+      ).toMatchObject({ operation, rest: identifiers });
     }
   });
 
   it("accepts operation-specific arguments and rejects unknown options", () => {
     expect(() =>
-      validateCommandGrammar(["sandbox", "get", "sandbox-id", "--json"]),
+      validateCommandGrammar(["vm", "inspect", "vm-id", "--json"]),
     ).not.toThrow();
     expect(() =>
-      validateCommandGrammar([
-        "sandbox",
-        "exec",
-        "get",
-        "sandbox-id",
-        "exec-id",
-      ]),
+      validateCommandGrammar(["vm", "exec", "status", "vm-id", "exec-id"]),
     ).not.toThrow();
     expect(() =>
-      validateCommandGrammar([
-        "sandbox",
-        "create",
-        "--body",
-        '{"name":"demo"}',
-      ]),
+      validateCommandGrammar(["vm", "create", "--body", '{"name":"demo"}']),
     ).not.toThrow();
     expect(() =>
-      validateCommandGrammar(["sandbox", "get", "sandbox-id", "--invented"]),
+      validateCommandGrammar(["vm", "inspect", "vm-id", "--invented"]),
     ).toThrow();
     expect(() =>
-      validateCommandGrammar(["sandbox", "get", "sandbox-id", "--name", "x"]),
+      validateCommandGrammar(["vm", "inspect", "vm-id", "--name", "x"]),
     ).toThrow();
     expect(() =>
-      validateCommandGrammar(["sandbox", "create", "--pool", "pool-id"]),
+      validateCommandGrammar(["vm", "create", "--pool", "pool-id"]),
     ).toThrow();
     expect(() =>
       validateCommandGrammar([
-        "sandbox",
+        "vm",
         "create",
         "--request-id",
         "018f4c28-dc05-7e91-9f8e-11e421bb8a91",
@@ -66,7 +64,17 @@ describe("Commander grammar", () => {
     ).toThrow();
   });
 
-  it("does not define public admin commands", () => {
-    expect(() => validateCommandGrammar(["admin", "host", "list"])).toThrow();
+  it.each([
+    "admin",
+    "sandbox",
+    "logical-machine",
+    "runtime-image",
+    "runtime-template",
+    "vnet",
+    "private-network",
+    "background",
+    "managed",
+  ])("does not expose '%s' or aliases", (root) => {
+    expect(() => validateCommandGrammar([root, "list"])).toThrow();
   });
 });
