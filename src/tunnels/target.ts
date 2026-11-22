@@ -71,30 +71,21 @@ export async function upstreamTrust(target: Target, path?: string) {
     return undefined;
   }
 
-  const trust =
-    typeof tls.getCACertificates === "function"
-      ? [
-          ...new Set([
-            ...tls.getCACertificates("default"),
-            ...tls.getCACertificates("system"),
-          ]),
-        ]
-      : path
-        ? [...tls.rootCertificates]
-        : undefined;
-  if (path) {
-    const file = await readFile(path, "utf8");
-    // Validate the PEM before reserving the address.
-    const certificates = file.match(
-      /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g,
-    );
-    if (!certificates?.length)
-      throw new Error("The upstream CA file contains no PEM certificates.");
-    trust!.push(
-      ...certificates.map((pem) => new X509Certificate(pem).toString()),
-    );
-  }
-  return trust;
+  if (!path) return undefined;
+  if (typeof tls.getCACertificates !== "function")
+    throw new Error("--upstream-ca requires Node.js 22.15.0 or later.");
+
+  const file = await readFile(path, "utf8");
+  // Validate the PEM before reserving the address.
+  const certificates = file.match(
+    /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g,
+  );
+  if (!certificates?.length)
+    throw new Error("The upstream CA file contains no PEM certificates.");
+  return [
+    ...tls.getCACertificates("default"),
+    ...certificates.map((pem) => new X509Certificate(pem).toString()),
+  ];
 }
 
 export function dialTarget(

@@ -272,7 +272,7 @@ borealis tunnel release demo --yes
 A bare port uses IPv4 loopback. Add `--ipv6` for IPv6 loopback. HTTP publishing
 also accepts an HTTP or HTTPS origin on `localhost`, `127.0.0.1`, or `[::1]`.
 The CLI verifies local HTTPS certificates and can trust additional PEM anchors
-from `--upstream-ca`. Ctrl+C disconnects the publisher and keeps a named
+from `--upstream-ca` on Node.js 22.15.0 or later. Ctrl+C disconnects the publisher and keeps a named
 reservation. Releasing an offline reservation retires its address permanently.
 If you previously signed in before tunnel scopes were available, sign in again
 to refresh the profile's grants.
