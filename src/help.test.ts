@@ -43,6 +43,7 @@ describe("rendered CLI help", () => {
         "profile",
         "status",
         "supervisor",
+        "tunnel",
         "version",
         "vm",
       ];

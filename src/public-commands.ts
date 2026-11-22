@@ -396,6 +396,11 @@ export const commandGroups: Readonly<Record<string, string>> = {
 };
 
 export const helpExamples: Readonly<Record<string, readonly string[]>> = {
+  tunnel: [
+    "borealis tunnel http 3000",
+    "borealis tunnel http https://localhost:8443 --name demo --upstream-ca ./dev-root.pem",
+    "borealis tunnel tcp 3000 --name demo",
+  ],
   "": [
     "borealis status",
     "borealis doctor",

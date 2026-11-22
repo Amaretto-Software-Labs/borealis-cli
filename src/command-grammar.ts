@@ -446,6 +446,37 @@ export function createCommandGrammar(): Command {
     .description("Select the default target")
     .action(() => undefined);
 
+  commandNode("tunnel").description(
+    "Publish a loopback service through Borealis Cloud",
+  );
+  commandNode("tunnel http")
+    .description("Publish a guest or named HTTP tunnel")
+    .argument("<target>", "loopback port or HTTP(S) origin")
+    .option("--name <name>", "stable tunnel name")
+    .option("--ipv6", "dial IPv6 loopback")
+    .option(
+      "--upstream-ca <file>",
+      "additional local HTTPS trust anchors in PEM format",
+    )
+    .action(() => undefined);
+  commandNode("tunnel tcp")
+    .description("Publish a named TCP tunnel")
+    .argument("<port>", "loopback TCP port")
+    .requiredOption("--name <name>", "stable tunnel name")
+    .option("--ipv6", "dial IPv6 loopback")
+    .action(() => undefined);
+  commandNode("tunnel list")
+    .description("List named tunnel reservations")
+    .action(() => undefined);
+  commandNode("tunnel disconnect")
+    .description("Disconnect a publisher and keep its reservation")
+    .argument("<name>")
+    .action(() => undefined);
+  commandNode("tunnel release")
+    .description("Permanently retire an offline tunnel")
+    .argument("<name>")
+    .action(() => undefined);
+
   const auth = commandNode("auth");
   auth
     .command("login")

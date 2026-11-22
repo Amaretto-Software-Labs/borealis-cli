@@ -354,23 +354,13 @@ export class BorealisApiClient {
     const headers = this.headers(request);
     if (operation.risk === "destructive") {
       const target = targetFromPath(operation, request.path);
-      const preflight = (await this.send(
-        "POST",
-        "/api/v1/preflights",
+      headers["x-borealis-preflight"] = await this.createPreflight(
         headers,
-        {
-          operationId:
-            operation.operationId === "logical_machine.delete"
-              ? "sandbox.delete"
-              : operation.operationId,
-          target,
-        },
-      )) as { preflightToken?: string };
-      if (!preflight.preflightToken)
-        throw new Error(
-          "The API returned an invalid destructive-operation preflight.",
-        );
-      headers["x-borealis-preflight"] = preflight.preflightToken;
+        operation.operationId === "logical_machine.delete"
+          ? "sandbox.delete"
+          : operation.operationId,
+        target,
+      );
     }
     const path = `${request.path}${request.query.size ? `?${request.query}` : ""}`;
     let result: unknown;
@@ -1098,6 +1088,51 @@ export class BorealisApiClient {
     )
       throw new Error("The API returned an invalid workspace upload status.");
     return status;
+  }
+
+  async tunnelRequest(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    timeoutMs = 10_000,
+  ): Promise<unknown> {
+    return await this.send(
+      method,
+      `/api/v1/tunnels${path}`,
+      this.headers(),
+      body,
+      timeoutMs,
+    );
+  }
+
+  async releaseTunnel(name: string): Promise<unknown> {
+    const headers = this.headers();
+    headers["x-borealis-preflight"] = await this.createPreflight(
+      headers,
+      "tunnel.release",
+      { name },
+    );
+    return await this.send(
+      "DELETE",
+      `/api/v1/tunnels/${encodeURIComponent(name)}`,
+      headers,
+    );
+  }
+
+  private async createPreflight(
+    headers: Record<string, string>,
+    operationId: string,
+    target: Record<string, unknown>,
+  ): Promise<string> {
+    const preflight = (await this.send("POST", "/api/v1/preflights", headers, {
+      operationId,
+      target,
+    })) as { preflightToken?: string };
+    if (!preflight.preflightToken)
+      throw new Error(
+        "The API returned an invalid destructive-operation preflight.",
+      );
+    return preflight.preflightToken;
   }
 
   async supervisorRequest(

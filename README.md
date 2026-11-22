@@ -239,6 +239,37 @@ borealis --profile cloud --token-file ./token vm list --json
 
 `--token` remains available but prints a warning because command-line arguments may be visible in process listings and shell history. Only one token source may be supplied.
 
+## Public tunnels
+
+Run a tunnel in the foreground on the machine that runs the loopback service.
+A guest HTTP tunnel gets a temporary address and needs no Cloud sign-in.
+
+```bash
+borealis tunnel http 3000
+```
+
+Sign in to a Borealis Cloud profile to reserve a stable address. The first
+successful publication reserves the name. Use the same name when the local port
+changes. TCP requires a named reservation and a relay with public TCP ingress.
+
+```bash
+borealis auth login
+borealis tunnel http 3000 --name demo
+borealis tunnel http https://localhost:8443 --name demo --upstream-ca ./dev-root.pem
+borealis tunnel tcp 3000 --name tcp-demo
+borealis tunnel list
+borealis tunnel disconnect demo
+borealis tunnel release demo --yes
+```
+
+A bare port uses IPv4 loopback. Add `--ipv6` for IPv6 loopback. HTTP publishing
+also accepts an HTTP or HTTPS origin on `localhost`, `127.0.0.1`, or `[::1]`.
+The CLI verifies local HTTPS certificates and can trust additional PEM anchors
+from `--upstream-ca`. Ctrl+C disconnects the publisher and keeps a named
+reservation. Releasing an offline reservation retires its address permanently.
+If you previously signed in before tunnel scopes were available, sign in again
+to refresh the profile's grants.
+
 ## Commands
 
 The same vocabulary applies to local, SSH and Cloud targets. Run
