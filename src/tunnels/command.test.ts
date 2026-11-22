@@ -275,3 +275,82 @@ it("rejects a TCP tunnel without a name before issuing a guest attachment", asyn
   expect(await run(["--api", api, "tunnel", "tcp", "3000"])).not.toBe(0);
   expect(fetcher).not.toHaveBeenCalled();
 });
+
+it.each([429, 503, 400])(
+  "handles Identity HTTP %s after the publisher loses its connection",
+  async (status) => {
+    const { fetcher, stderr } = capture();
+    const controller = new AbortController();
+    vi.stubEnv("BOREALIS_ACCESS_TOKEN", undefined);
+    const sessions = await import("../session-store.js");
+    const saved = {
+      accessToken: "original-access",
+      refreshToken: "refresh-secret",
+      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      scope: "borealis.tunnels.publish",
+      clientId: "borealis-saas-cli",
+      api,
+      identity: "https://identity.example.test",
+      app: "https://app.example.test",
+    };
+    vi.spyOn(sessions, "loadSession")
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValue({ ...saved, expiresAt: new Date(0).toISOString() });
+    vi.spyOn(sessions, "saveSession").mockResolvedValue(undefined);
+    fetcher
+      .mockResolvedValueOnce(Response.json(first))
+      .mockResolvedValueOnce(
+        Response.json({ error: "invalid_grant" }, { status }),
+      );
+    if (status === 400) {
+      fetcher.mockResolvedValueOnce(
+        Response.json({ error: "invalid_grant" }, { status: 400 }),
+      );
+    } else {
+      const fresh = () =>
+        Response.json({
+          access_token: "fresh-access",
+          token_type: "Bearer",
+          expires_in: 300,
+        });
+      fetcher
+        .mockResolvedValueOnce(fresh())
+        .mockResolvedValueOnce(Response.json(next))
+        .mockResolvedValueOnce(fresh())
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    }
+    relayControl
+      .mockResolvedValueOnce(true)
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return true;
+      });
+    expect(
+      await run(
+        ["tunnel", "http", "3000", "--name", first.name],
+        controller.signal,
+      ),
+    ).toBe(status === 400 ? 1 : 130);
+    const starts = fetcher.mock.calls.filter(([url]) =>
+      new URL(url).pathname.endsWith("/attachments"),
+    );
+    if (status === 400) {
+      expect(starts).toHaveLength(1);
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining("borealis auth login"),
+      );
+      expect(relayControl).toHaveBeenCalledOnce();
+    } else {
+      expect(starts).toHaveLength(2);
+      expect(JSON.parse(String(starts[1]?.[1].body))).toEqual({
+        protocol: "http",
+        session: first.session,
+        resumeToken: first.resumeToken,
+      });
+      expect(new Headers(starts[1]?.[1].headers).get("authorization")).toBe(
+        "Bearer fresh-access",
+      );
+      expect(relayControl).toHaveBeenCalledTimes(2);
+    }
+  },
+);

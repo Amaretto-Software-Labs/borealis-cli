@@ -1,3 +1,4 @@
+import { IdentityTokenError } from "../auth.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { ApiError, type BorealisApiClient } from "../api-client.js";
@@ -261,6 +262,11 @@ async function resumeWithBackoff(
       if (
         error instanceof ApiError &&
         ([408, 409, 429].includes(error.status) || error.status >= 500)
+      )
+        continue;
+      if (
+        error instanceof IdentityTokenError &&
+        ([408, 429].includes(error.status) || error.status >= 500)
       )
         continue;
       if (
